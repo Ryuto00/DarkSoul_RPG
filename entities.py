@@ -134,7 +134,7 @@ class Player:
         self.attack_cd = 0
         self.sliding_wall = 0  # -1 left, +1 right, 0 none
         self.iframes_flash = False
-        # developer cheat flag — when True player takes no damage
+        # developer cheat flag - when True player takes no damage
         self.god = False
         # parry state (frames left)
         self.parrying = 0
@@ -174,6 +174,9 @@ class Player:
         self._blink_t = 0
         # crowd control
         self.stunned = 0
+        # consumable buffs
+        self.speed_potion_timer = 0
+        self.speed_potion_bonus = 0.0
     def input(self, level, camera):
         if self.dead:
             return
@@ -587,14 +590,16 @@ class Player:
         else:
             self.dashing -= 1
 
+        speed_bonus = self.speed_potion_bonus if self.speed_potion_timer > 0 else 0.0
+        cd_step = 1.0 + speed_bonus
         if self.dash_cd > 0:
-            self.dash_cd -= 1
+            self.dash_cd = max(0.0, self.dash_cd - cd_step)
         if self.attack_cd > 0:
-            self.attack_cd -= 1
+            self.attack_cd = max(0.0, self.attack_cd - cd_step)
         # per-skill cooldowns
-        if self.skill_cd1 > 0: self.skill_cd1 -= 1
-        if self.skill_cd2 > 0: self.skill_cd2 -= 1
-        if self.skill_cd3 > 0: self.skill_cd3 -= 1
+        if self.skill_cd1 > 0: self.skill_cd1 = max(0.0, self.skill_cd1 - cd_step)
+        if self.skill_cd2 > 0: self.skill_cd2 = max(0.0, self.skill_cd2 - cd_step)
+        if self.skill_cd3 > 0: self.skill_cd3 = max(0.0, self.skill_cd3 - cd_step)
         if self.combo_t > 0:
             self.combo_t -= 1
         else:
@@ -637,6 +642,12 @@ class Player:
             self.stamina = min(self.max_stamina, self.stamina + self._stamina_regen)
         if hasattr(self, 'mana'):
             self.mana = min(self.max_mana, self.mana + self._mana_regen)
+
+        if self.speed_potion_timer > 0:
+            self.speed_potion_timer -= 1
+            if self.speed_potion_timer <= 0:
+                self.speed_potion_timer = 0
+                self.speed_potion_bonus = 0.0
 
         self.move_and_collide(level)
 
@@ -822,9 +833,9 @@ class Bug:
             self.alive = False
             floating.append(DamageNumber(self.rect.centerx, self.rect.centery, "KO", CYAN))
 
-    def draw(self, surf, camera):
+    def draw(self, surf, camera, show_los=False):
         # draw LOS line to last-checked player point if available
-        if getattr(self, '_los_point', None) is not None:
+        if show_los and getattr(self, '_los_point', None) is not None:
             col = GREEN if getattr(self, '_has_los', False) else RED
             pygame.draw.line(surf, col, camera.to_screen(self.rect.center), camera.to_screen(self._los_point), 2)
         col = (180, 70, 160) if self.ifr==0 else (120, 40, 100)
@@ -931,9 +942,9 @@ class Boss:
             self.alive = False
             floating.append(DamageNumber(self.rect.centerx, self.rect.centery, "KO", CYAN))
 
-    def draw(self, surf, camera):
+    def draw(self, surf, camera, show_los=False):
         # draw LOS line to last-checked player point if available
-        if getattr(self, '_los_point', None) is not None:
+        if show_los and getattr(self, '_los_point', None) is not None:
             col = GREEN if getattr(self, '_has_los', False) else RED
             pygame.draw.line(surf, col, camera.to_screen(self.rect.center), camera.to_screen(self._los_point), 2)
         col = (200, 100, 40) if self.ifr==0 else (140, 80, 30)
@@ -1026,10 +1037,10 @@ class Frog:
             self.alive=False
             floating.append(DamageNumber(self.rect.centery, self.rect.centery, "KO", CYAN))
 
-    def draw(self, surf, camera):
+    def draw(self, surf, camera, show_los=False):
         if not self.alive: return
         # draw LOS line to last-checked player point if available
-        if getattr(self, '_los_point', None) is not None:
+        if show_los and getattr(self, '_los_point', None) is not None:
             col = GREEN if getattr(self, '_has_los', False) else RED
             pygame.draw.line(surf, col, camera.to_screen(self.rect.center), camera.to_screen(self._los_point), 2)
         col = (80, 200, 80) if self.ifr==0 else (60, 120, 60)
@@ -1104,10 +1115,10 @@ class Archer:
             self.alive=False
             floating.append(DamageNumber(self.rect.centery, self.rect.centery, "KO", CYAN))
 
-    def draw(self, surf, camera):
+    def draw(self, surf, camera, show_los=False):
         if not self.alive: return
         # draw LOS line to last-checked player point if available
-        if getattr(self, '_los_point', None) is not None:
+        if show_los and getattr(self, '_los_point', None) is not None:
             col = GREEN if getattr(self, '_has_los', False) else RED
             pygame.draw.line(surf, col, camera.to_screen(self.rect.center), camera.to_screen(self._los_point), 2)
         col = (200, 200, 80) if self.ifr==0 else (120, 120, 60)
@@ -1181,10 +1192,10 @@ class WizardCaster:
             self.alive=False
             floating.append(DamageNumber(self.rect.centery, self.rect.centery, "KO", CYAN))
 
-    def draw(self, surf, camera):
+    def draw(self, surf, camera, show_los=False):
         if not self.alive: return
         # draw LOS line to last-checked player point if available
-        if getattr(self, '_los_point', None) is not None:
+        if show_los and getattr(self, '_los_point', None) is not None:
             col = GREEN if getattr(self, '_has_los', False) else RED
             pygame.draw.line(surf, col, camera.to_screen(self.rect.center), camera.to_screen(self._los_point), 2)
         col = (180, 120, 220) if self.ifr==0 else (110, 80, 140)
@@ -1291,10 +1302,10 @@ class Assassin:
             self.alive=False
             floating.append(DamageNumber(self.rect.centery, self.rect.centery, "KO", CYAN))
 
-    def draw(self, surf, camera):
+    def draw(self, surf, camera, show_los=False):
         if not self.alive: return
         # draw LOS line to last-checked player point if available
-        if getattr(self, '_los_point', None) is not None:
+        if show_los and getattr(self, '_los_point', None) is not None:
             col = GREEN if getattr(self, '_has_los', False) else RED
             pygame.draw.line(surf, col, camera.to_screen(self.rect.center), camera.to_screen(self._los_point), 2)
         # semi-invisible look: darker color
@@ -1369,10 +1380,10 @@ class Bee:
             self.alive=False
             floating.append(DamageNumber(self.rect.centery, self.rect.centery, "KO", CYAN))
 
-    def draw(self, surf, camera):
+    def draw(self, surf, camera, show_los=False):
         if not self.alive: return
         # draw LOS line to last-checked player point if available
-        if getattr(self, '_los_point', None) is not None:
+        if show_los and getattr(self, '_los_point', None) is not None:
             col = GREEN if getattr(self, '_has_los', False) else RED
             pygame.draw.line(surf, col, camera.to_screen(self.rect.center), camera.to_screen(self._los_point), 2)
         col = (240, 180, 60) if self.ifr==0 else (140, 120, 50)
@@ -1465,11 +1476,11 @@ class Golem:
             self.alive=False
             floating.append(DamageNumber(self.rect.centery, self.rect.centery, "KO", CYAN))
 
-    def draw(self, surf, camera):
+    def draw(self, surf, camera, show_los=False):
         if not self.alive: return
         # draw LOS line to last-checked player point if available
-        if getattr(self, '_los_point', None) is not None:
-            col = GREEN if getattr(self, 
+        if show_los and getattr(self, '_los_point', None) is not None:
+            col = GREEN if getattr(self,
             '_has_los', False) else RED
             pygame.draw.line(surf, col, camera.to_screen(self.rect.center), camera.to_screen(self._los_point), 2)
         col = (140, 140, 160) if self.ifr==0 else (100, 100, 120)
