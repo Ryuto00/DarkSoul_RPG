@@ -10,7 +10,8 @@ from config import (
     POGO_BOUNCE_VY, ACCENT, GREEN, CYAN, RED, WHITE, IFRAME_BLINK_INTERVAL,
     WALL_SLIDE_SPEED, WALL_JUMP_H_SPEED, WALL_JUMP_V_SPEED, WALL_STICK_TIME, WALL_JUMP_COOLDOWN,
     AIR_ACCEL, AIR_FRICTION, MAX_AIR_SPEED,
-    WALL_JUMP_FLOAT_FRAMES, WALL_JUMP_FLOAT_GRAVITY_SCALE, WALL_JUMP_CONTROL_FRAMES
+    WALL_JUMP_FLOAT_FRAMES, WALL_JUMP_FLOAT_GRAVITY_SCALE, WALL_JUMP_CONTROL_FRAMES,
+    WALL_JUMP_AIRBORNE_FRAMES, WALL_JUMP_AIRBORNE_COLOR
 )
 from entity_common import Hitbox, DamageNumber, hitboxes, floating
 
@@ -33,6 +34,12 @@ class Player:
         # Wall jump float & control state
         self.wall_jump_float_timer = 0
         self.wall_jump_control_timer = 0
+        # Wall jump airborne window state
+        self.wall_jump_airborne_timer = 0
+        self.wall_jump_airborne_active = False
+        self.wall_jump_free_action_used = False
+        # Track if player has touched ground since last wall jump chain
+        self.wall_jump_chain_active = False
         self.double_jumps = DOUBLE_JUMPS
         self.can_dash = True
         self.dashing = 0
@@ -221,16 +228,17 @@ class Player:
                 if not (keys[pygame.K_SPACE] or keys[pygame.K_k]):
                     self.vy *= PLAYER_SMALL_JUMP_CUT
 
-        # Dash only if mobility cooldown free as well
+        # Dash only if mobility cooldown free as well, OR during airborne window with free action
+        free_dash_available = self.wall_jump_airborne_active and not self.wall_jump_free_action_used
         if (
             not stunned
-            and self.mobility_cd == 0
+            and (self.mobility_cd == 0 or free_dash_available)
             and (keys[pygame.K_LSHIFT] or keys[pygame.K_j])
-            and self.can_dash
-            and self.dash_cd == 0
+            and (self.can_dash or free_dash_available)
+            and (self.dash_cd == 0 or free_dash_available)
             and not self.dashing
         ):
-            self.start_dash()
+            self.start_dash(free_action=free_dash_available)
 
         # Parry: Right mouse button or E (Knight only)
         rmb = pygame.mouse.get_pressed()[2]
@@ -287,23 +295,30 @@ class Player:
         # update prev mouse state
         self._prev_lmb = lmb
 
-    def start_dash(self):
-        # require some stamina to dash
-        dash_cost = 2.0
-        if getattr(self, 'stamina', 0) <= 0:
-            return
-        # consume stamina if available
-        if hasattr(self, 'stamina'):
-            self.stamina = max(0.0, self.stamina - dash_cost)
-        # start stamina regen cooldown (1 second)
-        self._stamina_cooldown = int(FPS)
+    def start_dash(self, free_action=False):
+        # require some stamina to dash (unless it's a free action)
+        if not free_action:
+            dash_cost = 2.0
+            if getattr(self, 'stamina', 0) <= 0:
+                return
+            # consume stamina if available
+            if hasattr(self, 'stamina'):
+                self.stamina = max(0.0, self.stamina - dash_cost)
+            # start stamina regen cooldown (1 second)
+            self._stamina_cooldown = int(FPS)
+            self.can_dash = False
+            self.dash_cd = DASH_COOLDOWN
+            # trigger shared mobility cooldown
+            self.mobility_cd = MOBILITY_COOLDOWN_FRAMES
+        else:
+            # Free dash during airborne window
+            self.wall_jump_free_action_used = True
+            self.wall_jump_airborne_active = False
+            self.wall_jump_airborne_timer = 0
+        
         # grant short invincibility when dash starts (0.25s)
         self.inv = int(0.25 * FPS)
         self.dashing = DASH_TIME
-        self.can_dash = False
-        self.dash_cd = DASH_COOLDOWN
-        # trigger shared mobility cooldown
-        self.mobility_cd = MOBILITY_COOLDOWN_FRAMES
         self.vy = 0
         self.vx = self.facing * DASH_SPEED
 
@@ -578,6 +593,12 @@ class Player:
             self.double_jumps = DOUBLE_JUMPS + int(getattr(self, 'extra_jump_charges', 0))
             self.can_dash = True if self.dash_cd == 0 else self.can_dash
             self.wall_stick_timer = 0  # Reset wall stick timer when on ground
+            # Reset wall jump chain when touching ground
+            if self.wall_jump_chain_active:
+                self.wall_jump_chain_active = False
+                self.wall_jump_airborne_active = False
+                self.wall_jump_free_action_used = False
+                self.wall_jump_airborne_timer = 0
         else:
             self.coyote = max(0, self.coyote-1)
 
@@ -591,6 +612,13 @@ class Player:
         # Update wall stick timer
         if self.wall_stick_timer > 0:
             self.wall_stick_timer -= 1
+
+        # Update wall jump airborne window timer
+        if self.wall_jump_airborne_timer > 0:
+            self.wall_jump_airborne_timer -= 1
+            if self.wall_jump_airborne_timer == 0:
+                self.wall_jump_airborne_active = False
+                self.wall_jump_free_action_used = False
 
         # Check if player should stick to wall (just left ground)
         if self.was_on_ground and not self.on_ground and (self.on_left_wall or self.on_right_wall):
@@ -617,33 +645,59 @@ class Player:
             did = False
             # Wall jump takes priority over normal jump when wall sliding
             if self.wall_sliding:
-                # Softer wall jump away from wall with controllable airborne phase.
-                # Nudge position slightly off the wall to avoid immediate recollision.
-                if self.on_left_wall:
-                    self.rect.x += 2
-                    self.vx = WALL_JUMP_H_SPEED
-                elif self.on_right_wall:
-                    self.rect.x -= 2
-                    self.vx = -WALL_JUMP_H_SPEED
+                # Check wall jump cooldown before allowing wall jump
+                if self.wall_jump_cooldown > 0:
+                    # Don't allow wall jump, but allow normal jump if possible
+                    if self.double_jumps > 0:
+                        self.vy = PLAYER_JUMP_V * jump_mult
+                        self.double_jumps -= 1
+                        did = True
                 else:
-                    # Fallback: use facing direction if flags are desynced
-                    self.vx = -WALL_JUMP_H_SPEED if self.facing > 0 else WALL_JUMP_H_SPEED
-                self.vy = WALL_JUMP_V_SPEED * jump_mult
-                # Start float + control window to make launch feel like a soft, controllable jump
-                self.wall_jump_float_timer = WALL_JUMP_FLOAT_FRAMES
-                self.wall_jump_control_timer = WALL_JUMP_CONTROL_FRAMES
-                # Short cooldown so we don't instantly re-stick to the same wall.
-                self.wall_jump_cooldown = WALL_JUMP_COOLDOWN
-                self.wall_stick_timer = 0
-                self.on_left_wall = False
-                self.on_right_wall = False
-                did = True
+                    # Softer wall jump away from wall with controllable airborne phase.
+                    # Nudge position slightly off the wall to avoid immediate recollision.
+                    if self.on_left_wall:
+                        self.rect.x += 2
+                        self.vx = WALL_JUMP_H_SPEED
+                    elif self.on_right_wall:
+                        self.rect.x -= 2
+                        self.vx = -WALL_JUMP_H_SPEED
+                    else:
+                        # Fallback: use facing direction if flags are desynced
+                        self.vx = -WALL_JUMP_H_SPEED if self.facing > 0 else WALL_JUMP_H_SPEED
+                    self.vy = WALL_JUMP_V_SPEED * jump_mult
+                    # Start float + control window to make launch feel like a soft, controllable jump
+                    self.wall_jump_float_timer = WALL_JUMP_FLOAT_FRAMES
+                    self.wall_jump_control_timer = WALL_JUMP_CONTROL_FRAMES
+                    # Only start airborne window if not already in a wall jump chain
+                    if not self.wall_jump_chain_active:
+                        # Start airborne window for free action
+                        self.wall_jump_airborne_timer = WALL_JUMP_AIRBORNE_FRAMES
+                        self.wall_jump_airborne_active = True
+                        self.wall_jump_free_action_used = False
+                        self.wall_jump_chain_active = True
+                    # Apply wall jump cooldown to prevent immediate re-sticking
+                    self.wall_jump_cooldown = WALL_JUMP_COOLDOWN
+                    self.wall_stick_timer = 0
+                    self.on_left_wall = False
+                    self.on_right_wall = False
+                    # IMPORTANT: Allow double jump after wall jump by NOT consuming double_jumps here
+                    # The double jump should be available after wall jump
+                    did = True
             elif self.on_ground or self.coyote > 0:
                 self.vy = PLAYER_JUMP_V * jump_mult
+                did = True
+            elif self.wall_jump_airborne_active and not self.wall_jump_free_action_used:
+                # Free jump during wall jump airborne window
+                self.vy = PLAYER_JUMP_V * jump_mult
+                self.wall_jump_free_action_used = True
+                self.wall_jump_airborne_active = False
+                self.wall_jump_airborne_timer = 0
                 did = True
             elif self.double_jumps > 0:
                 self.vy = PLAYER_JUMP_V * jump_mult
                 self.double_jumps -= 1
+                # Apply wall jump cooldown to normal double jumps as well
+                self.wall_jump_cooldown = WALL_JUMP_COOLDOWN
                 did = True
             if did:
                 self.jump_buffer = 0

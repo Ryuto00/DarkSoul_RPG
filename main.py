@@ -1,7 +1,7 @@
 import sys
 
 import pygame
-from config import WIDTH, HEIGHT, FPS, BG, WHITE, CYAN, GREEN
+from config import WIDTH, HEIGHT, FPS, BG, WHITE, CYAN, GREEN, WALL_JUMP_AIRBORNE_COLOR
 from utils import draw_text, get_font
 from camera import Camera
 from level import Level, ROOM_COUNT
@@ -220,10 +220,18 @@ class Game:
             c = (80,200,120) if i < self.player.hp else (60,80,60)
             pygame.draw.rect(self.screen, c, pygame.Rect(x+i*18, y, 16, 10), border_radius=3)
         y += 16
+        # Dash cooldown bar (cyan)
         if self.player.dash_cd:
             pct = 1 - (self.player.dash_cd / 24)
             pygame.draw.rect(self.screen, (80,80,80), pygame.Rect(x, y, 120, 6), border_radius=3)
             pygame.draw.rect(self.screen, CYAN, pygame.Rect(x, y, int(120*pct), 6), border_radius=3)
+            y += 12  # Add space for next bar
+        
+        # Wall jump cooldown bar (orange) - positioned at bottom of other bars
+        if self.player.wall_jump_cooldown > 0:
+            pct = 1 - (self.player.wall_jump_cooldown / 16)  # WALL_JUMP_COOLDOWN is now 16 frames
+            pygame.draw.rect(self.screen, (80,80,80), pygame.Rect(x, y, 120, 6), border_radius=3)
+            pygame.draw.rect(self.screen, WALL_JUMP_AIRBORNE_COLOR, pygame.Rect(x, y, int(120*pct), 6), border_radius=3)
         # stamina bar (if player has stamina)
         y += 12
         if hasattr(self.player, 'stamina') and hasattr(self.player, 'max_stamina'):

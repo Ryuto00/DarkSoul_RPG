@@ -52,11 +52,15 @@ WALL_SLIDE_SPEED = 2.0      # Maximum speed while sliding down wall
 WALL_JUMP_H_SPEED = 6.5     # Horizontal velocity for wall jump (softer, less "cannon" feel)
 WALL_JUMP_V_SPEED = -9.5    # Vertical velocity for wall jump
 WALL_STICK_TIME = 6         # Frames player sticks to wall after leaving ground
-WALL_JUMP_COOLDOWN = 8      # Frames before player can stick to wall again after wall jump
+WALL_JUMP_COOLDOWN = 16     # Frames before player can stick to wall again after wall jump
 
 # Wall jump float & control tuning
 WALL_JUMP_FLOAT_FRAMES = 10             # Slightly longer float for softer vertical arc
 WALL_JUMP_FLOAT_GRAVITY_SCALE = 0.32    # Reduced gravity during float
 WALL_JUMP_CONTROL_FRAMES = 18           # During this window, wall jump is more steerable & clamped
+
+# Wall jump airborne window mechanics
+WALL_JUMP_AIRBORNE_FRAMES = 45          # 0.75 second airborne window after wall jump for free action
+WALL_JUMP_AIRBORNE_COLOR = (255, 165, 0)  # Orange color for wall jump cooldown bar
 
 TILE = 24
