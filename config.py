@@ -28,9 +28,6 @@ DASH_COOLDOWN = 24
 INVINCIBLE_FRAMES = int(0.5 * FPS)
 # Blink interval during i-frames (seconds -> frames)
 IFRAME_BLINK_INTERVAL = int(0.1 * FPS)
-WALL_SLIDE_MAX = 1.6  # Reduced from 2.6 for better control (Super Meat Boy style)
-WALL_JUMP_VX = 5.8  # Reduced from 8.5 for moderate horizontal push
-WALL_JUMP_VY = -9.4  # Adjusted for better jump arc
 DOUBLE_JUMPS = 1
 
 ATTACK_COOLDOWN = 10

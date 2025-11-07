@@ -300,14 +300,8 @@ class Game:
             secs = max(0, int(self.player.stamina_boost_timer / FPS))
             draw_text(self.screen, f"Cavern Brew {secs}s", (WIDTH-180, HEIGHT-160), (150,255,180), size=16, bold=True)
 
-        # Wall slide indicator
-        if getattr(self.player, 'sliding_wall', 0) != 0 and not self.player.on_ground:
-            slide_text = f"WALL SLIDE [{self.player.sliding_wall:+d}]"
-            slide_color = (150, 150, 255) if self.player.sliding_wall == -1 else (255, 150, 150)
-            draw_text(self.screen, slide_text, (WIDTH-180, HEIGHT-180), slide_color, size=16, bold=True)
-
         draw_text(self.screen,
-                  "Move A/D | Jump Space/K | Dash Shift/J | Attack L/Mouse | Up/Down+Attack for Up/Down slash (Down=Pogo) | Wall Jump: Touch wall + Jump",
+                  "Move A/D | Jump Space/K | Dash Shift/J | Attack L/Mouse | Up/Down+Attack for Up/Down slash (Down=Pogo)",
                   (12, HEIGHT-28), (180,180,200), size=16)
         draw_text(self.screen, f"Room {self.level_index+1}/{ROOM_COUNT}", (12, 8), WHITE)
         if getattr(self.player, 'god', False):

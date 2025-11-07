@@ -5,7 +5,7 @@ from config import (
     FPS, GRAVITY, TERMINAL_VY, PLAYER_SPEED, PLAYER_AIR_SPEED, PLAYER_JUMP_V,
     PLAYER_SMALL_JUMP_CUT, COYOTE_FRAMES, JUMP_BUFFER_FRAMES,
     DASH_SPEED, DASH_TIME, DASH_COOLDOWN, INVINCIBLE_FRAMES,
-    WALL_SLIDE_MAX, DOUBLE_JUMPS,
+    DOUBLE_JUMPS,
     ATTACK_COOLDOWN, ATTACK_LIFETIME, COMBO_RESET, SWORD_DAMAGE,
     POGO_BOUNCE_VY, ACCENT, GREEN, CYAN, RED, WHITE, IFRAME_BLINK_INTERVAL
 )
@@ -26,10 +26,6 @@ class Player:
         self.dashing = 0
         self.dash_cd = 0
         self.inv = 0
-        # Wall jump parameters
-        self.wall_jump_vx = WALL_JUMP_VX
-        self.wall_jump_vy = WALL_JUMP_VY
-        self.wall_jump_timer = 0 # Timer to prevent immediate re-wall-jumping
         # class selection
         self.cls = cls
         if cls == 'Knight':
@@ -45,8 +41,6 @@ class Player:
             # Knight: moderate stamina regen, mana regen default 5 per second
             self._stamina_regen = 0.08
             self._mana_regen = 5.0 / FPS
-            self.wall_jump_vx = 7.0
-            self.wall_jump_vy = -11.0
         elif cls == 'Ranger':
             self.max_hp = 5
             self.hp = 5
@@ -60,8 +54,6 @@ class Player:
             # Ranger: fast stamina regen, mana regen default 5 per second
             self._stamina_regen = 0.18
             self._mana_regen = 5.0 / FPS
-            self.wall_jump_vx = 8.0
-            self.wall_jump_vy = -12.0
         elif cls == 'Wizard':
             self.max_hp = 4
             self.hp = 4
@@ -75,8 +67,6 @@ class Player:
             # Wizard: lower stamina regen, higher mana regen (8 per second)
             self._stamina_regen = 0.05
             self._mana_regen = 8.0 / FPS
-            self.wall_jump_vx = 6.5
-            self.wall_jump_vy = -10.5
         elif cls == 'Assassin': # Assuming Assassin is a player class
             self.max_hp = 6
             self.hp = 6
@@ -89,8 +79,6 @@ class Player:
             self.mana = 60.0
             self._stamina_regen = 0.15
             self._mana_regen = 6.0 / FPS
-            self.wall_jump_vx = 9.0
-            self.wall_jump_vy = -13.0
         else:
             # fallback to defaults
             self.max_hp = 5
@@ -98,13 +86,9 @@ class Player:
             self.player_speed = PLAYER_SPEED
             self.player_air_speed = PLAYER_AIR_SPEED
             self.attack_damage = SWORD_DAMAGE
-            self.wall_jump_vx = WALL_JUMP_VX
-            self.wall_jump_vy = WALL_JUMP_VY
         self.combo = 0
         self.combo_t = 0
         self.attack_cd = 0
-        self.sliding_wall = 0  # -1 left, +1 right, 0 none
-        self.wall_jump_timer = 0  # brief timer after wall jump for control
         self.iframes_flash = False
         # developer cheat flag - when True player takes no damage
         self.god = False
@@ -192,8 +176,6 @@ class Player:
             if self.vy < 0:
                 if not (keys[pygame.K_SPACE] or keys[pygame.K_k]):
                     self.vy *= PLAYER_SMALL_JUMP_CUT
-        
-        # New wall jump system: immediate response, no complex gripping
 
         if not stunned and (keys[pygame.K_LSHIFT] or keys[pygame.K_j]) and self.can_dash and self.dash_cd == 0 and not self.dashing:
             self.start_dash()
@@ -543,21 +525,6 @@ class Player:
         if self.jump_buffer > 0:
             self.jump_buffer -= 1
 
-        # Decrement wall jump timer
-        if self.wall_jump_timer > 0:
-            self.wall_jump_timer -= 1
-
-        self.sliding_wall = 0
-        if not self.on_ground and not self.dashing:
-            left_check = self.rect.move(-1, 0)
-            right_check = self.rect.move(1, 0)
-            if any(left_check.colliderect(s) for s in level.solids) and self.vx < 0:
-                self.sliding_wall = -1
-            elif any(right_check.colliderect(s) for s in level.solids) and self.vx > 0:
-                self.sliding_wall = 1
-
-        if self.sliding_wall != 0 and self.vy > WALL_SLIDE_MAX:
-            self.vy = WALL_SLIDE_MAX
 
         want_jump = self.jump_buffer > 0
         jump_mult = getattr(self, 'jump_force_multiplier', 1.0)
@@ -565,12 +532,6 @@ class Player:
             did = False
             if self.on_ground or self.coyote > 0:
                 self.vy = PLAYER_JUMP_V * jump_mult
-                did = True
-            elif self.sliding_wall != 0 and self.wall_jump_timer == 0: # Only allow wall jump if timer is 0
-                self.vy = self.wall_jump_vy * jump_mult
-                self.vx = -self.sliding_wall * self.wall_jump_vx
-                self.facing = -self.sliding_wall
-                self.wall_jump_timer = 5 # Set timer to prevent immediate re-wall-jumping
                 did = True
             elif self.double_jumps > 0:
                 self.vy = PLAYER_JUMP_V * jump_mult
@@ -682,28 +643,6 @@ class Player:
                     self.rect.top = s.bottom
                 self.vy = 0
 
-    def perform_wall_jump(self, jump_mult=1.0):
-        """
-        Super Meat Boy style wall jump - immediate, responsive, tight control
-        """
-        if self.sliding_wall == 0:
-            return
-            
-        # Calculate jump direction (away from wall)
-        jump_direction = -self.sliding_wall
-        
-        # Super Meat Boy style: moderate horizontal push, tight control
-        # Use config values for consistent tuning
-        self.vx = jump_direction * WALL_JUMP_VX  # Moderate horizontal push
-        # Vertical jump with good height for traversal
-        self.vy = WALL_JUMP_VY * jump_mult  # Configurable vertical jump
-        
-        # Update facing direction
-        self.facing = jump_direction
-        
-        # Shorter timer for tighter, more responsive control
-        self.wall_jump_timer = 3  # Reduced from 6 for tighter control
-
     def damage(self, amount, knock=(0,0)):
         # respect god mode first
         if getattr(self, 'god', False):
@@ -731,10 +670,4 @@ class Player:
     def draw(self, surf, camera):
         col = ACCENT if not self.iframes_flash else (ACCENT[0], ACCENT[1], 80)
         
-        # Visual feedback for wall sliding
-        if self.sliding_wall != 0 and not self.on_ground:
-            # Change color when wall sliding
-            slide_col = (150, 150, 255) if self.sliding_wall == -1 else (255, 150, 150)
-            pygame.draw.rect(surf, slide_col, camera.to_screen_rect(self.rect), border_radius=4)
-        else:
-            pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=4)
+        pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=4)
