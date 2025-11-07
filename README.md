@@ -35,6 +35,7 @@ Dev cheats (for testing):
 - F3: Toggle Enemy Vision Rays
 - F4: Open the debugger menu (pause overlay)
 - F5: Open the debugger menu (alternative key)
+- F6-F10: Jump to Rooms 1-5
 
 ## Menu flow
 
@@ -62,17 +63,20 @@ Each class has unique resource bars (stamina/mana) and cooldowns shown on the HU
 - Default consumables:
   - **Health Flask** — restores 3 HP.
   - **Mana Vial** — restores 10 MP.
-  - **Speed Tonic** — grants a temporary “Haste” buff that speeds up attack/dash/skill cooldown recovery. A HUD label appears while it is active.
-- Consumables can also be refilled instantly from the debugger menu (F5 ➜ “Refill Consumables”).
+  - **Haste Draught** — grants a temporary "Haste" buff that speeds up attack/dash/skill cooldown recovery. A HUD label appears while it is active.
+  - **Skyroot Elixir** — Higher jumps and triple-jump for 12s.
+  - **Cavern Brew** — +25% stamina for 30s. Bar glows green.
+- Consumables can also be refilled instantly from the debugger menu (F5 ➜ "Refill Consumables").
 
 ### Debugger menu
 
 Press `F4` (or `F5`) at any time during gameplay to open the debugger overlay. From there you can:
 
 - Toggle God Mode, Infinite Mana, and Zero Cooldown without remembering individual hotkeys.
-- Jump directly to the boss room, teleport to any room via a level picker, or close the menu.
+- Jump directly to any room via a level picker, or close the menu.
 - Enable/disable enemy vision rays to visualize their current line-of-sight target.
 - Instantly refill all consumable slots for quick testing of the hotbar interactions.
+- Spawn items and equipment directly into inventory.
 
 ## Gameplay notes
 
@@ -141,6 +145,9 @@ Each enemy is drawn as a colored rectangle; during their invulnerability frames 
 - `camera.py` — Camera to-screen transforms
 - `config.py` — Config constants (sizes, colors, FPS)
 - `utils.py` — Fonts, text drawing, helpers
+- `inventory.py` — Inventory system, consumables, equipment management
+- `items.py` — Item definitions for consumables and armaments
+- `menu.py` — Menu system (title, class select, pause, game over)
 
 ## Collaboration tips
 

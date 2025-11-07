@@ -15,18 +15,26 @@ Hotkeys (during gameplay):
 - F4  — Open Debugger Menu
   - Opens the comprehensive debug menu with additional options.
 
-- F5  — Go to Room 1
-- F6  — Go to Room 2
-- F7  — Go to Room 3
-- F8  — Go to Room 4
-- F9  — Go to Room 5
-- F10 — Go to Room 6 (Boss)
+- F5  — Open Debugger Menu (alternative key)
+
+- F6  — Go to Room 1
+- F7  — Go to Room 2
+- F8  — Go to Room 3
+- F9  — Go to Room 4
+- F10 — Go to Room 5
 
 Notes:
 - Active cheats are shown on the HUD (top-right):
   - GOD (God Mode), IM (Infinite Mana), ZCD (Zero Cooldown)
 - You can still pause with Esc; choosing Main Menu returns to Title.
 - Boss rooms keep doors locked until the boss is defeated.
+
+Debugger Menu Features:
+- Toggle God Mode, Infinite Mana, and Zero Cooldown
+- Teleport to any room via level picker
+- Give items and equipment directly to inventory
+- Refill all consumables instantly
+- Toggle enemy vision rays
 
 Where implemented:
 - main.py

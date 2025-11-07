@@ -8,13 +8,17 @@ Controls:
 - Attack: L or Left Mouse
 - Up/Down + Attack for directional slashes (Down = Pogo)
 - Pause: Esc
+- Inventory: I
+- Consumables: 4/5/6 keys
+- Skills: 1/2/3 keys (class-specific)
 
 Developer Cheats:
 - F1  God Mode (toggle)
-- F2  Teleport to Boss Room
-- F3  Infinite Mana (toggle)
-- F4  Zero Cooldown (toggle)
-- F5–F10  Jump to Rooms 1–6
+- F2  Refill Consumables
+- F3  Toggle Enemy Vision Rays
+- F4  Open Debugger Menu
+- F5  Open Debugger Menu (alternative)
+- F6–F10  Jump to Rooms 1–5
 
 ASCII Map Legend:
 - # wall/platform
@@ -23,10 +27,23 @@ ASCII Map Legend:
 - D door to next room
 - E Bug, f Frog, r Archer, w Wizard Caster, a Assassin, b Bee, B Boss, G Golem (boss)
 
+Classes:
+- Knight: Tanky melee with Shield/Power/Charge skills
+- Ranger: Ranged with charge shots, triple-shot, and speed boost
+- Wizard: Spellcaster with Fireball, Cold Field, and Magic Missiles
+
+Inventory System:
+- Press I to open inventory overlay
+- Manage consumables and armaments
+- Default consumables vary by class:
+  - Knight: Health Flask, Cavern Brew, Mana Vial
+  - Ranger: Health Flask, Skyroot Elixir, Haste Draught
+  - Wizard: Mana Vial, Skyroot Elixir, Cavern Brew
+
 Monsters (color = rectangle fill color; darker variant indicates i-frames):
 - Bug (E)
   - Color: RGB(180,70,160) violet; i-frames: RGB(120,40,100)
-  - Smart ground enemy: patrol/search/pursue with LOS, contact damage, affected by slow/DOT, parry reflects.
+  - Smart ground enemy: patrol/search/pursue with vision cone, contact damage, affected by slow/DOT, parry reflects.
 
 - Frog (f)
   - Color: RGB(80,200,80) green; i-frames: RGB(60,120,60)
@@ -42,7 +59,7 @@ Monsters (color = rectangle fill color; darker variant indicates i-frames):
 
 - Assassin (a)
   - Color: RGB(60,60,80) dark slate; i-frames: RGB(40,40,60)
-  - Randomly chooses: "!" diagonal dash (spawns short sword hitboxes) or "!!" forward slash.
+  - Semi-invisible: Randomly chooses "!" diagonal dash (spawns sword hitboxes) or "!!" forward slash.
 
 - Bee (b)
   - Color: RGB(240,180,60) amber; i-frames: RGB(140,120,50)
@@ -55,3 +72,10 @@ Monsters (color = rectangle fill color; darker variant indicates i-frames):
 - Golem (G)
   - Color: RGB(140,140,160) steel; i-frames: RGB(100,100,120)
   - Patterns: "!" diagonal dash, "!!" shoot, "!!" radial stun AoE (applies stun tag, radius ~72).
+
+Debugger Menu:
+- Toggle God Mode, Infinite Mana, Zero Cooldown
+- Teleport to any room
+- Give items and equipment
+- Refill consumables
+- Toggle enemy vision rays
