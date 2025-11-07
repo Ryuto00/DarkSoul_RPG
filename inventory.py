@@ -32,6 +32,26 @@ class ConsumableStack:
 
 
 class Inventory:
+    UNEQUIP_GEAR_KEY = "__inventory_clear_gear__"
+    UNEQUIP_CONSUMABLE_KEY = "__inventory_clear_consumable__"
+    MAX_CONSUMABLE_SLOT_STACK = 20
+
+    _UNEQUIP_CELL_INFO = {
+        'gear': {
+            'color': (60, 60, 80),
+            'border': (200, 120, 120),
+            'letter': "X",
+            'title': "Unequip Armament",
+            'subtitle': "Clears selected armament slot.",
+        },
+        'consumable': {
+            'color': (60, 65, 90),
+            'border': (200, 120, 160),
+            'letter': "X",
+            'title': "Unequip Consumable",
+            'subtitle': "Clears selected consumable slot.",
+        },
+    }
     def __init__(self, game):
         self.game = game
         self.inventory_open = False
@@ -43,6 +63,7 @@ class Inventory:
         self.consumable_slots = []
         self.armament_scroll_offset = 0
         self.consumable_scroll_offset = 0
+        self.consumable_storage: dict[str, int] = {}
         
         # Initialize inventory-related attributes
         self.consumable_hotkeys = [pygame.K_4, pygame.K_5, pygame.K_6]
@@ -106,7 +127,7 @@ class Inventory:
                 flavor="Thick, earthy, stubborn.",
             ),
         }
-        self.consumable_order = list(self.consumable_catalog.keys())
+        self.consumable_order: list[str] = []
 
     def _refresh_inventory_defaults(self):
         consumable_defaults = {
@@ -120,6 +141,8 @@ class Inventory:
         self.gear_slots = available_armaments[:3]
         while len(self.gear_slots) < 3:
             self.gear_slots.append(None)  # Type: List[Optional[str]]
+        self.consumable_order = []
+        self.consumable_storage.clear()
         keys = consumable_defaults.get(cls, ['health', 'mana', None])
         slots = []
         for i in range(len(self.consumable_hotkeys)):
@@ -256,6 +279,14 @@ class Inventory:
                 self.inventory_selection = {'kind': 'gear_slot', 'index': idx}
         elif kind == 'gear_pool':
             key = hit['key']
+            if key == self.UNEQUIP_GEAR_KEY:
+                if sel and sel.get('kind') == 'gear_slot':
+                    idx = sel.get('index', -1)
+                    if 0 <= idx < len(self.gear_slots):
+                        if self.gear_slots[idx] is not None:
+                            self.gear_slots[idx] = None
+                            self.recalculate_player_stats()
+                return
             if sel and sel.get('kind') == 'gear_slot':
                 self._equip_armament(sel['index'], key)
                 self.inventory_selection = {'kind': 'gear_slot', 'index': sel['index']}
@@ -265,6 +296,13 @@ class Inventory:
                 self.inventory_selection = {'kind': 'gear_pool', 'key': key}
         elif kind == 'consumable_pool':
             key = hit['key']
+            if key == self.UNEQUIP_CONSUMABLE_KEY:
+                if sel and sel.get('kind') == 'consumable_slot':
+                    idx = sel.get('index', -1)
+                    if 0 <= idx < len(self.consumable_slots):
+                        if self.consumable_slots[idx]:
+                            self._unequip_consumable_slot(idx)
+                return
             if sel and sel.get('kind') == 'consumable_slot':
                 self._equip_consumable(sel['index'], key)
                 self.inventory_selection = {'kind': 'consumable_slot', 'index': sel['index']}
@@ -310,7 +348,7 @@ class Inventory:
             if sel and sel.get('kind') == 'consumable_slot':
                 idx = sel.get('index', -1)
                 if 0 <= idx < len(self.consumable_slots):
-                    self.consumable_slots[idx] = None
+                    self._unequip_consumable_slot(idx)
                     self._clear_inventory_selection()
         elif kind == 'unequip_consumable_stock':
             # Unequip selected consumable from stock
@@ -320,7 +358,7 @@ class Inventory:
                     # Find and remove from consumable slots
                     for i, stack in enumerate(self.consumable_slots):
                         if stack and stack.key == key:
-                            self.consumable_slots[i] = None
+                            self._unequip_consumable_slot(i)
                             self._clear_inventory_selection()
                             break
 
@@ -359,6 +397,12 @@ class Inventory:
             if key is None and kind == 'gear_slot':
                 idx = info.get('index', -1)
                 key = self.gear_slots[idx] if 0 <= idx < len(self.gear_slots) else None
+            if key == self.UNEQUIP_GEAR_KEY:
+                cell_info = self._UNEQUIP_CELL_INFO['gear']
+                payload['lines'] = [cell_info['title'], cell_info['subtitle']]
+                payload['color'] = cell_info['border']
+                payload['letter'] = cell_info['letter']
+                return payload
             if not key:
                 payload['lines'] = ["Empty Armament Slot"]
                 return payload
@@ -382,17 +426,26 @@ class Inventory:
                     payload['lines'] = ["Empty Consumable Slot"]
                     return payload
                 key = stack.key
-                extra = f"Stack: {stack.count}"
+                stack_count = stack.count
             else:
                 key = info.get('key')
-                extra = None
+                stack_count = None
+            if key == self.UNEQUIP_CONSUMABLE_KEY:
+                cell_info = self._UNEQUIP_CELL_INFO['consumable']
+                payload['lines'] = [cell_info['title'], cell_info['subtitle']]
+                payload['color'] = cell_info['border']
+                payload['letter'] = cell_info['letter']
+                return payload
             entry = self.consumable_catalog.get(key) if key else None
             if not entry:
                 payload['lines'] = ["Unknown Consumable"]
                 return payload
             lines = entry.tooltip_lines()
-            if extra:
-                lines.append(extra)
+            if stack_count is not None:
+                lines.append(f"Stack: {stack_count}")
+            storage_count = self._storage_count(key)
+            if storage_count > 0:
+                lines.append(f"Storage: {storage_count}")
             payload['lines'] = lines
             payload['color'] = entry.color
             payload['letter'] = entry.icon_letter
@@ -435,6 +488,16 @@ class Inventory:
             self.game.screen.blit(font.render(line, True, (230, 230, 245)),
                              (text_x, tooltip_rect.y + 6 + i * 22))
 
+    def _draw_unequip_stock_cell(self, surface, rect, mode, icon_font, highlighted):
+        info = self._UNEQUIP_CELL_INFO.get(mode)
+        if not info:
+            return
+        pygame.draw.rect(surface, info['color'], rect, border_radius=8)
+        border_col = info['border'] if highlighted else (150, 150, 170)
+        pygame.draw.rect(surface, border_col, rect, width=2, border_radius=8)
+        icon_surface = icon_font.render(info['letter'], True, (225, 225, 235))
+        surface.blit(icon_surface, icon_surface.get_rect(center=rect.center))
+
     def _draw_stock_panel(self, rect, mode, selection):
         pygame.draw.rect(self.game.screen, (32, 30, 48), rect, border_radius=12)
         pygame.draw.rect(self.game.screen, (210, 200, 170), rect, width=1, border_radius=12)
@@ -456,6 +519,7 @@ class Inventory:
         spacing = 12
         cols = 2
         icon_font = get_font(18, bold=True)
+        count_font = get_font(16, bold=True)
         selection_key = None
         if selection and selection.get('kind') in (f"{mode}_pool", f"{mode}_slot"):
             selection_key = selection.get('key')
@@ -467,9 +531,10 @@ class Inventory:
                     stack = self.consumable_slots[idx]
                     selection_key = stack.key if stack else None
         if mode == 'gear':
-            keys = self.armament_order
+            keys = [*self.armament_order, self.UNEQUIP_GEAR_KEY]
         else:
-            keys = self.consumable_order
+            consumable_keys = [k for k in self.consumable_order if self._has_consumable_anywhere(k)]
+            keys = [*consumable_keys, self.UNEQUIP_CONSUMABLE_KEY]
         for i, key in enumerate(keys):
             row = i // cols
             col = i % cols
@@ -480,19 +545,31 @@ class Inventory:
                 cell_size,
             )
             entry = self.armament_catalog.get(key) if mode == 'gear' else self.consumable_catalog.get(key)
-            if not entry:
-                continue
-            pygame.draw.rect(self.game.screen, entry.color, cell, border_radius=8)
-            border_col = (255, 210, 120) if selection_key == key else (160, 160, 190)
-            pygame.draw.rect(self.game.screen, border_col, cell, width=2, border_radius=8)
-            if mode == 'gear' and key in self.gear_slots:
-                pygame.draw.rect(self.game.screen, (120, 230, 180), cell.inflate(6, 6), width=2, border_radius=10)
-            if mode == 'consumable':
-                equipped = any(stack and stack.key == key for stack in self.consumable_slots)
-                if equipped:
+            if mode == 'gear' and key == self.UNEQUIP_GEAR_KEY:
+                highlighted = selection_key == key
+                self._draw_unequip_stock_cell(self.game.screen, cell, 'gear', icon_font, highlighted)
+            elif mode == 'consumable' and key == self.UNEQUIP_CONSUMABLE_KEY:
+                highlighted = selection_key == key
+                self._draw_unequip_stock_cell(self.game.screen, cell, 'consumable', icon_font, highlighted)
+            else:
+                if not entry:
+                    continue
+                pygame.draw.rect(self.game.screen, entry.color, cell, border_radius=8)
+                border_col = (255, 210, 120) if selection_key == key else (160, 160, 190)
+                pygame.draw.rect(self.game.screen, border_col, cell, width=2, border_radius=8)
+                if mode == 'gear' and key in self.gear_slots:
                     pygame.draw.rect(self.game.screen, (120, 230, 180), cell.inflate(6, 6), width=2, border_radius=10)
-            icon_surface = icon_font.render(entry.icon_letter, True, (20, 20, 28))
-            self.game.screen.blit(icon_surface, icon_surface.get_rect(center=cell.center))
+                if mode == 'consumable':
+                    equipped = self._total_equipped_count(key)
+                    if equipped > 0:
+                        pygame.draw.rect(self.game.screen, (120, 230, 180), cell.inflate(6, 6), width=2, border_radius=10)
+                    total = self._total_available_count(key)
+                    if total > 1:
+                        count_surface = count_font.render(str(total), True, (250, 250, 255))
+                        count_rect = count_surface.get_rect(bottomright=(cell.right - 4, cell.bottom - 4))
+                        self.game.screen.blit(count_surface, count_rect)
+                icon_surface = icon_font.render(entry.icon_letter, True, (20, 20, 28))
+                self.game.screen.blit(icon_surface, icon_surface.get_rect(center=cell.center))
             region_kind = 'gear_pool' if mode == 'gear' else 'consumable_pool'
             self._register_inventory_region(cell, region_kind, key=key)
         
@@ -650,11 +727,11 @@ class Inventory:
 
         current_scroll_offset = 0
         if self.inventory_stock_mode == 'gear':
-            keys_to_draw = self.armament_order
+            keys_to_draw = [*self.armament_order, self.UNEQUIP_GEAR_KEY]
             current_scroll_offset = self.armament_scroll_offset
             draw_text(stock_surface, "Armory Stock", (10, 10), (210, 200, 170), size=18)
         elif self.inventory_stock_mode == 'consumable':
-            keys_to_draw = self.consumable_order
+            keys_to_draw = [*self.consumable_order, self.UNEQUIP_CONSUMABLE_KEY]
             current_scroll_offset = self.consumable_scroll_offset
             draw_text(stock_surface, "Consumable Stock", (10, 10), (210, 200, 170), size=18)
         else:
@@ -685,8 +762,13 @@ class Inventory:
             if cell.bottom > grid_start_y_in_surface and cell.top < stock_panel_rect.height:
                 if self.inventory_stock_mode == 'gear':
                     self._register_inventory_region(cell.move(stock_panel_rect.topleft), 'gear_pool', key=key)
+                    if key == self.UNEQUIP_GEAR_KEY:
+                        highlighted = bool(selection and selection.get('kind') == 'gear_pool' and selection.get('key') == key)
+                        self._draw_unequip_stock_cell(stock_surface, cell, 'gear', icon_font, highlighted)
+                        continue
                     entry = self.armament_catalog.get(key)
-                    if not entry: continue
+                    if not entry:
+                        continue
                     pygame.draw.rect(stock_surface, entry.color, cell, border_radius=8)
                     border_col = (160, 160, 190)
                     if selection and selection.get('kind') in ('gear_pool', 'gear_slot') and selection.get('key') == key:
@@ -698,8 +780,13 @@ class Inventory:
                     stock_surface.blit(icon_surface, icon_surface.get_rect(center=cell.center))
                 elif self.inventory_stock_mode == 'consumable':
                     self._register_inventory_region(cell.move(stock_panel_rect.topleft), 'consumable_pool', key=key)
+                    if key == self.UNEQUIP_CONSUMABLE_KEY:
+                        highlighted = bool(selection and selection.get('kind') == 'consumable_pool' and selection.get('key') == key)
+                        self._draw_unequip_stock_cell(stock_surface, cell, 'consumable', icon_font, highlighted)
+                        continue
                     entry = self.consumable_catalog.get(key)
-                    if not entry: continue
+                    if not entry:
+                        continue
                     pygame.draw.rect(stock_surface, entry.color, cell, border_radius=8)
                     border_col = (160, 160, 190)
                     if selection and selection.get('kind') in ('consumable_pool', 'consumable_slot') and selection.get('key') == key:
@@ -833,6 +920,101 @@ class Inventory:
             trimmed = trimmed[:-1]
         return trimmed + ellipsis if trimmed else ellipsis
 
+    def _inventory_message(self, text, color=WHITE):
+        player = getattr(self.game, 'player', None)
+        if not player:
+            return
+        floating.append(DamageNumber(player.rect.centerx,
+                                     player.rect.top - 12,
+                                     text,
+                                     color))
+
+    def _storage_count(self, key):
+        return self.consumable_storage.get(key, 0)
+
+    def _slot_stack_limit(self, key):
+        item = self.consumable_catalog.get(key)
+        if not item:
+            return self.MAX_CONSUMABLE_SLOT_STACK
+        return max(item.max_stack, self.MAX_CONSUMABLE_SLOT_STACK)
+
+    def _discover_consumable_key(self, key):
+        """Track consumables that actually exist so the stock list mirrors inventory."""
+        if not key or key not in self.consumable_catalog:
+            return
+        if key not in self.consumable_order:
+            self.consumable_order.append(key)
+
+    def _has_consumable_anywhere(self, key):
+        if not key:
+            return False
+        if any(stack and stack.key == key for stack in self.consumable_slots):
+            return True
+        return self._storage_count(key) > 0
+
+    def _prune_consumable_key(self, key):
+        """Remove depleted consumables from the stock list once no stacks remain."""
+        if not key or key not in self.consumable_order:
+            return
+        if self._has_consumable_anywhere(key):
+            return
+        self.consumable_order.remove(key)
+
+    def _storage_add(self, key, amount):
+        if amount <= 0 or not key or key not in self.consumable_catalog:
+            return 0
+        amount = int(amount)
+        if amount <= 0:
+            return 0
+        self.consumable_storage[key] = self._storage_count(key) + amount
+        self._discover_consumable_key(key)
+        return amount
+
+    def _storage_remove(self, key, amount):
+        if amount <= 0 or not key or key not in self.consumable_catalog:
+            return 0
+        current = self._storage_count(key)
+        take = min(current, int(amount))
+        if take <= 0:
+            return 0
+        remaining = current - take
+        if remaining > 0:
+            self.consumable_storage[key] = remaining
+        else:
+            self.consumable_storage.pop(key, None)
+            self._prune_consumable_key(key)
+        return take
+
+    def add_consumable_to_storage(self, key, count=1):
+        """Public helper to stash consumables without equipping them."""
+        return self._storage_add(key, count)
+
+    def _total_equipped_count(self, key):
+        return sum(stack.count for stack in self.consumable_slots if stack and stack.key == key)
+
+    def _total_available_count(self, key):
+        return self._total_equipped_count(key) + self._storage_count(key)
+
+    def _clear_consumable_slot(self, idx):
+        """Clear a consumable slot when the stack is depleted or invalid."""
+        if idx < 0 or idx >= len(self.consumable_slots):
+            return
+        stack = self.consumable_slots[idx]
+        key = stack.key if stack else None
+        self.consumable_slots[idx] = None
+        if key:
+            self._prune_consumable_key(key)
+
+    def _unequip_consumable_slot(self, idx):
+        """Move the slot stack back into storage."""
+        if idx < 0 or idx >= len(self.consumable_slots):
+            return
+        stack = self.consumable_slots[idx]
+        if not stack:
+            return
+        self._storage_add(stack.key, stack.count)
+        self.consumable_slots[idx] = None
+
     def consume_slot(self, idx):
         """Consume a consumable from the given slot index."""
         if idx < 0 or idx >= len(self.consumable_slots):
@@ -842,13 +1024,13 @@ class Inventory:
             return False
         entry = self.consumable_catalog.get(stack.key)
         if not entry:
-            self.consumable_slots[idx] = None
+            self._clear_consumable_slot(idx)
             return False
         consumed = entry.use(self.game)
         if consumed:
             stack.consume_one()
             if stack.is_empty():
-                self.consumable_slots[idx] = None
+                self._clear_consumable_slot(idx)
             return True
         if hasattr(self.game, 'player') and self.game.player:
             floating.append(DamageNumber(self.game.player.rect.centerx,
@@ -861,7 +1043,9 @@ class Inventory:
         """Create a consumable stack for the given key."""
         if not key_id or key_id not in self.consumable_catalog:
             return None
-        return ConsumableStack(key=key_id, count=max(1, count))
+        stack = ConsumableStack(key=key_id, count=max(1, count))
+        self._discover_consumable_key(key_id)
+        return stack
 
     def _swap_gear_slots(self, idx1, idx2):
         """Swap two gear slots."""
@@ -903,8 +1087,7 @@ class Inventory:
             return
         
         # Ensure new discoveries appear in stock lists, but keep existing ordering stable
-        if key not in self.consumable_order:
-            self.consumable_order.append(key)
+        self._discover_consumable_key(key)
         
         # Check if this consumable already exists in another slot and swap
         for i, stack in enumerate(self.consumable_slots):
@@ -916,10 +1099,27 @@ class Inventory:
                 )
                 return
         
-        # If no duplicate found, just equip normally
+        item_def = self.consumable_catalog[key]
+        slot_limit = self._slot_stack_limit(key)
         existing = self.consumable_slots[slot_idx]
-        count = existing.count if (existing and existing.key == key) else 1
-        self.consumable_slots[slot_idx] = ConsumableStack(key=key, count=max(1, count))
+        if existing and existing.key != key:
+            self._unequip_consumable_slot(slot_idx)
+            existing = None
+        if existing and existing.key == key:
+            missing = max(0, slot_limit - existing.count)
+            if missing <= 0:
+                return
+            pulled = self._storage_remove(key, missing)
+            if pulled <= 0:
+                self._inventory_message("No stock")
+                return
+            existing.count += pulled
+            return
+        pulled = self._storage_remove(key, slot_limit)
+        if pulled <= 0:
+            self._inventory_message("No stock")
+            return
+        self.consumable_slots[slot_idx] = ConsumableStack(key=key, count=pulled)
 
     def add_consumable(self, key, count=1):
         """Add consumables to the appropriate slot or create new stack."""
@@ -927,28 +1127,37 @@ class Inventory:
         if not item_def or count <= 0:
             return 0
         remaining = count
+        added_total = 0
+        slot_limit = self._slot_stack_limit(key)
         # first try to add to existing stacks
         for stack in self.consumable_slots:
             if stack and stack.key == key:
-                added = stack.add(remaining, item_def.max_stack)
-                remaining -= added
+                added = stack.add(remaining, slot_limit)
+                if added > 0:
+                    remaining -= added
+                    added_total += added
                 if remaining <= 0:
-                    return count
+                    break
         # then fill empty slots
-        for i, stack in enumerate(self.consumable_slots):
-            if stack is None:
-                take = min(remaining, item_def.max_stack)
-                self.consumable_slots[i] = ConsumableStack(key=key, count=take)
-                remaining -= take
-                if remaining <= 0:
-                    return count
-        # inventory full for this consumable
-        if remaining > 0 and hasattr(self.game, 'player') and self.game.player:
-            floating.append(DamageNumber(self.game.player.rect.centerx,
-                                         self.game.player.rect.top - 12,
-                                         "Inventory full",
-                                         WHITE))
-        return count - remaining
+        if remaining > 0:
+            for i, stack in enumerate(self.consumable_slots):
+                if stack is None:
+                    take = min(remaining, slot_limit)
+                    if take <= 0:
+                        continue
+                    self.consumable_slots[i] = ConsumableStack(key=key, count=take)
+                    remaining -= take
+                    added_total += take
+                    if remaining <= 0:
+                        break
+        stored = 0
+        if remaining > 0:
+            stored = self._storage_add(key, remaining)
+            added_total += stored
+            remaining = max(0, remaining - stored)
+        if added_total > 0:
+            self._discover_consumable_key(key)
+        return added_total
 
     def add_all_consumables(self):
         """Developer helper: stack every known consumable into inventory."""
