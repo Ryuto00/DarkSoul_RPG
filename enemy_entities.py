@@ -15,6 +15,8 @@ from config import (
 from utils import los_clear, find_intermediate_visible_point, find_idle_patrol_target
 from entity_common import Hitbox, DamageNumber, hitboxes, floating, in_vision_cone
 from player_entity import Player
+from enemy_movement import MovementStrategyFactory
+from terrain_system import terrain_system
 
 
 class Enemy:
@@ -24,7 +26,9 @@ class Enemy:
         # Basic properties
         self.rect = pygame.Rect(x - width//2, ground_y - height, width, height)
         self.vx = 0
+        self.vy = 0
         self.hp = hp
+        self.max_hp = hp
         self.alive = True
         self.ifr = 0  # Invincibility frames
         
@@ -46,9 +50,39 @@ class Enemy:
         self.last_seen = None
         self.repath_t = 0
         
-        # For debug drawing
-        self._has_los = False
-        self._los_point = None
+        # New movement system properties
+        self.movement_strategy = None
+        self.speed_multiplier = 1.0
+        self.terrain_traits = self._get_terrain_traits()
+        self.on_ground = False
+        self.base_speed = 1.0
+        
+        # Physics properties
+        self.friction = 0.8
+        self.gravity_affected = True
+        self.sliding = False
+        self.stuck = False
+        self.stuck_timer = 0
+        
+        # Set movement strategy based on enemy type
+        self._set_movement_strategy()
+    
+    def _get_terrain_traits(self):
+        """Define terrain access traits for each enemy type"""
+        return ['ground']  # Default
+    
+    def _initialize_movement_strategy(self):
+        """Initialize movement strategy - to be overridden by subclasses"""
+        # Default to ground patrol
+        self.movement_strategy = MovementStrategyFactory.create_strategy('ground_patrol')
+    
+    def _set_movement_strategy(self):
+        """Set movement strategy based on enemy type"""
+        # This will be overridden by specific enemy classes
+        pass
+        
+        # Initialize movement strategy
+        self._initialize_movement_strategy()
     
     def update_vision_cone(self, player_pos):
         """Update facing direction based on player position."""
@@ -151,11 +185,70 @@ class Enemy:
             self.alive = False
             floating.append(DamageNumber(self.rect.centerx, self.rect.centery, "KO", CYAN))
     
-    def handle_movement(self, level, speed_multiplier=1.0):
-        """Handle horizontal movement with collision detection."""
-        # Apply slow effect if any
-        actual_speed = speed_multiplier * getattr(self, 'slow_mult', 1.0)
+    def handle_movement(self, level, player=None, speed_multiplier=1.0):
+        """Handle movement using new movement system."""
+        # Apply terrain effects
+        current_pos = (self.rect.centerx, self.rect.centery)
+        terrain_type = terrain_system.get_terrain_at(current_pos, level)
         
+        if not terrain_system.apply_terrain_effects(self, terrain_type):
+            # Cannot access this terrain, find alternative
+            self._handle_inaccessible_terrain(level)
+            return
+        
+        # Apply all speed modifiers
+        actual_speed = speed_multiplier * self.speed_multiplier * getattr(self, 'slow_mult', 1.0)
+        
+        # Use movement strategy if available
+        if self.movement_strategy:
+            context = self._create_movement_context(level, player)
+            self.movement_strategy.move(self, level, player, context)
+        else:
+            # Fallback to original movement
+            self._fallback_movement(level, actual_speed)
+    
+    def _create_movement_context(self, level, player=None):
+        """Create context dictionary for movement strategy"""
+        # Calculate distance to player if available
+        distance_to_player = 0
+        if player:
+            dx = player.rect.centerx - self.rect.centerx
+            dy = player.rect.centery - self.rect.centery
+            distance_to_player = (dx*dx + dy*dy) ** 0.5
+        
+        context = {
+            'player': player,
+            'has_los': getattr(self, '_has_los', False),
+            'distance_to_player': distance_to_player,
+            'terrain_type': terrain_system.get_terrain_at((self.rect.centerx, self.rect.centery), level),
+            'level': level
+        }
+        return context
+    
+    def _handle_inaccessible_terrain(self, level):
+        """Handle when enemy encounters inaccessible terrain"""
+        self.vx = 0
+        self.vy = 0
+        
+        # Try to find alternative path
+        if hasattr(self, 'target') and self.target:
+            # Ensure target is a tuple
+            if isinstance(self.target, tuple):
+                target_pos = self.target
+            else:
+                # Convert to tuple if needed
+                target_pos = (self.target[0] if hasattr(self.target, '__getitem__') else self.target.rect.centerx,
+                             self.target[1] if hasattr(self.target, '__getitem__') else self.target.rect.centery)
+            
+            alt_path = terrain_system.find_alternative_path(
+                (self.rect.centerx, self.rect.centery),
+                target_pos, self, level
+            )
+            if alt_path:
+                self.target = alt_path[0] if alt_path else None
+    
+    def _fallback_movement(self, level, actual_speed):
+        """Fallback movement for enemies without strategy"""
         # Move horizontally
         self.rect.x += int(self.vx * actual_speed)
         for s in level.solids:
@@ -169,7 +262,9 @@ class Enemy:
     def handle_gravity(self, level, gravity_multiplier=2.0):
         """Apply gravity and handle ground collision."""
         # Apply gravity
+        old_y = self.rect.y
         self.rect.y += int(min(10, GRAVITY * gravity_multiplier))
+        
         for s in level.solids:
             if self.rect.colliderect(s):
                 if self.rect.bottom > s.top and self.rect.centery < s.centery:
@@ -233,9 +328,18 @@ class Enemy:
         """Handle being hit by a player attack."""
         self.handle_hit(hb, player)
     
-    def draw(self, surf, camera, show_los=False):
+    def draw(self, surf, camera, show_los=False, show_nametags=False):
         """Draw the enemy."""
         raise NotImplementedError("Subclasses must implement draw method")
+    
+    def draw_nametag(self, surf, camera, show_nametags=False):
+        """Draw enemy type nametag when debug is enabled."""
+        if show_nametags and self.alive:
+            from utils import draw_text
+            enemy_type = self.__class__.__name__
+            draw_text(surf, enemy_type,
+                     camera.to_screen((self.rect.centerx, self.rect.top - 20)),
+                     (255, 255, 100), size=14, bold=True)
 
 class Bug(Enemy):
     def __init__(self, x, ground_y):
@@ -245,6 +349,16 @@ class Bug(Enemy):
         self.vx = random.choice([-1,1]) * 1.6
         self.facing = 1 if self.vx > 0 else -1
         self.facing_angle = 0 if self.facing > 0 else math.pi
+        self.base_speed = 1.8
+        self.can_jump = False
+    
+    def _get_terrain_traits(self):
+        """Bug can navigate through narrow spaces"""
+        return ['ground', 'small', 'narrow']
+    
+    def _set_movement_strategy(self):
+        """Set movement strategy for Bug"""
+        self.movement_strategy = MovementStrategyFactory.create_strategy('ground_patrol')
 
     def tick(self, level, player):
         if not self.alive: return
@@ -286,22 +400,20 @@ class Bug(Enemy):
                 self.state = 'idle'
                 self.target = find_idle_patrol_target(level, self.home)
 
-        # Movement toward target if any
-        self.vx = 0
-        if self.target:
-            tx, ty = self.target
-            dx = tx - self.rect.centerx
-            dy = ty - self.rect.centery
-            if abs(dx) < 2 and abs(dy) < 2:
-                if self.state in ('search','idle'):
-                    self.target = None
-                # reached current target
-            else:
-                self.vx = 1.8 if dx > 0 else -1.8
+        # Use new movement system
+        context = {
+            'player': player,
+            'has_los': has_los,
+            'distance_to_player': dist_to_player,
+            'level': level
+        }
         
-        # Handle movement and collision
-        self.handle_movement(level)
-        self.handle_gravity(level)
+        # Handle movement with new system
+        self.handle_movement(level, player)
+        
+        # Apply gravity for ground-based enemies
+        if self.gravity_affected:
+            self.handle_gravity(level)
         
         # Update invincibility frames
         if self.ifr > 0:
@@ -311,13 +423,16 @@ class Bug(Enemy):
         self.handle_player_collision(player, damage=1, knockback=(2, -6))
     # hit method is inherited from Enemy base class
 
-    def draw(self, surf, camera, show_los=False):
+    def draw(self, surf, camera, show_los=False, show_nametags=False):
         # Draw debug vision cone and LOS line
         self.draw_debug_vision(surf, camera, show_los)
         
         # Draw the bug
         col = (180, 70, 160) if self.ifr==0 else (120, 40, 100)
         pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=6)
+        
+        # Draw nametag if enabled
+        self.draw_nametag(surf, camera, show_nametags)
 
 
 class Boss(Enemy):
@@ -328,6 +443,16 @@ class Boss(Enemy):
         # Make boss wider and taller
         super().__init__(x, ground_y, width=64, height=48, hp=70,
                         vision_range=300, cone_half_angle=math.pi/3, turn_rate=0.03)
+        self.base_speed = 1.2
+        self.can_jump = False
+    
+    def _get_terrain_traits(self):
+        """Boss can break through destructible terrain"""
+        return ['ground', 'strong', 'destructible']
+    
+    def _set_movement_strategy(self):
+        """Set movement strategy for Boss"""
+        self.movement_strategy = MovementStrategyFactory.create_strategy('ground_patrol')
 
     def tick(self, level, player):
         if not self.alive: return
@@ -351,7 +476,7 @@ class Boss(Enemy):
             self.vx = 0
 
         # Handle movement and collision
-        self.handle_movement(level)
+        self.handle_movement(level, player)
         self.handle_gravity(level)
         
         # Update invincibility frames
@@ -394,13 +519,16 @@ class Boss(Enemy):
             self.alive = False
             floating.append(DamageNumber(self.rect.centerx, self.rect.centery, "KO", CYAN))
 
-    def draw(self, surf, camera, show_los=False):
+    def draw(self, surf, camera, show_los=False, show_nametags=False):
         # Draw debug vision cone and LOS line
         self.draw_debug_vision(surf, camera, show_los)
         
         # Draw the boss
         col = (200, 100, 40) if self.ifr==0 else (140, 80, 30)
         pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=8)
+        
+        # Draw nametag if enabled
+        self.draw_nametag(surf, camera, show_nametags)
 
 
 # --- New Enemy Types ---
@@ -416,6 +544,16 @@ class Frog(Enemy):
         self.tele_text = ''
         self.cool = 0
         self.dash_t = 0
+        self.base_speed = 1.5
+        self.can_jump = True
+    
+    def _get_terrain_traits(self):
+        """Frog can move through water and jump over obstacles"""
+        return ['ground', 'amphibious']
+    
+    def _set_movement_strategy(self):
+        """Set movement strategy for Frog"""
+        self.movement_strategy = MovementStrategyFactory.create_strategy('jumping')
 
     def tick(self, level, player):
         if not self.alive: return
@@ -469,7 +607,7 @@ class Frog(Enemy):
                 self.tele_text = '!'
 
         # Handle movement and collision
-        self.handle_movement(level)
+        self.handle_movement(level, player)
         
         # Handle vertical velocity for dash
         self.vy = getattr(self, 'vy', 0) + min(GRAVITY, 10)
@@ -485,7 +623,7 @@ class Frog(Enemy):
 
     # hit method is inherited from Enemy base class
 
-    def draw(self, surf, camera, show_los=False):
+    def draw(self, surf, camera, show_los=False, show_nametags=False):
         if not self.alive: return
         
         # Draw debug vision cone and LOS line
@@ -500,6 +638,9 @@ class Frog(Enemy):
             from utils import draw_text
             rx, ry = self.rect.centerx, self.rect.top - 10
             draw_text(surf, self.tele_text, camera.to_screen((rx-4, ry)), (255,80,80), size=18, bold=True)
+        
+        # Draw nametag if enabled
+        self.draw_nametag(surf, camera, show_nametags)
 
 
 class Archer(Enemy):
@@ -511,6 +652,16 @@ class Archer(Enemy):
         self.cool = 0
         self.tele_t = 0
         self.tele_text = ''
+        self.base_speed = 1.2
+        self.can_jump = False
+    
+    def _get_terrain_traits(self):
+        """Archer prefers high ground and tactical positions"""
+        return ['ground']
+    
+    def _set_movement_strategy(self):
+        """Set movement strategy for Archer"""
+        self.movement_strategy = MovementStrategyFactory.create_strategy('ranged_tactical')
 
     def tick(self, level, player):
         if not self.alive: return
@@ -552,12 +703,12 @@ class Archer(Enemy):
             self.vx = -1.2 if ppos[0]>epos[0] else 1.2
         
         # Handle movement and collision
-        self.handle_movement(level)
+        self.handle_movement(level, player)
         self.handle_gravity(level)
 
     # hit method is inherited from Enemy base class
 
-    def draw(self, surf, camera, show_los=False):
+    def draw(self, surf, camera, show_los=False, show_nametags=False):
         if not self.alive: return
         
         # Draw debug vision cone and LOS line
@@ -571,6 +722,9 @@ class Archer(Enemy):
         if getattr(self, 'tele_t', 0) > 0 and getattr(self, 'tele_text',''):
             from utils import draw_text
             draw_text(surf, self.tele_text, camera.to_screen((self.rect.centerx-4, self.rect.top-10)), (255,200,80), size=18, bold=True)
+        
+        # Draw nametag if enabled
+        self.draw_nametag(surf, camera, show_nametags)
 
 
 class WizardCaster(Enemy):
@@ -583,6 +737,17 @@ class WizardCaster(Enemy):
         self.tele_t = 0
         self.tele_text = ''
         self.action = None  # 'bolt' | 'missile' | 'fireball'
+        self.base_speed = 0.8
+        self.can_jump = False
+        self.gravity_affected = False  # Wizards float
+    
+    def _get_terrain_traits(self):
+        """Wizard can float over most terrain"""
+        return ['ground', 'floating']
+    
+    def _set_movement_strategy(self):
+        """Set movement strategy for WizardCaster"""
+        self.movement_strategy = MovementStrategyFactory.create_strategy('floating')
 
     def tick(self, level, player):
         if not self.alive: return
@@ -632,7 +797,7 @@ class WizardCaster(Enemy):
 
     # hit method is inherited from Enemy base class
 
-    def draw(self, surf, camera, show_los=False):
+    def draw(self, surf, camera, show_los=False, show_nametags=False):
         if not self.alive: return
         
         # Draw debug vision cone and LOS line
@@ -646,6 +811,9 @@ class WizardCaster(Enemy):
         if getattr(self, 'tele_t', 0) > 0 and getattr(self, 'tele_text',''):
             from utils import draw_text
             draw_text(surf, self.tele_text, camera.to_screen((self.rect.centerx-4, self.rect.top-10)), (255,200,80), size=18, bold=True)
+        
+        # Draw nametag if enabled
+        self.draw_nametag(surf, camera, show_nametags)
 
 
 class Assassin(Enemy):
@@ -659,6 +827,16 @@ class Assassin(Enemy):
         self.cool = 0
         self.action = None  # 'dash' or 'slash'
         self.dash_t = 0
+        self.base_speed = 2.0
+        self.can_jump = True
+    
+    def _get_terrain_traits(self):
+        """Assassin can move through narrow spaces and jump"""
+        return ['ground', 'small', 'narrow', 'jumping']
+    
+    def _set_movement_strategy(self):
+        """Set movement strategy for Assassin"""
+        self.movement_strategy = MovementStrategyFactory.create_strategy('ground_patrol')
 
     def tick(self, level, player):
         if not self.alive: return
@@ -727,22 +905,36 @@ class Assassin(Enemy):
             else:
                 self.tele_t = 12
                 self.tele_text = '!!'
-        # Handle movement and collision
-        self.handle_movement(level)
         
-        # Handle vertical velocity for dash
-        self.vy = getattr(self, 'vy', 0) + min(GRAVITY, 10)
-        self.rect.y += int(min(10, self.vy))
-        for s in level.solids:
-            if self.rect.colliderect(s):
-                if self.rect.bottom > s.top and self.rect.centery < s.centery:
-                    self.rect.bottom = s.top
-                    self.vy = 0
+        # Use new movement system for basic movement
+        if self.state != 'dash':  # Don't override dash movement
+            self.handle_movement(level, player)
+        
+        # Handle vertical velocity for dash (separate from movement system)
+        if self.state == 'dash':
+            self.vy = getattr(self, 'vy', 0) + min(GRAVITY, 10)
+            self.rect.y += int(min(10, self.vy))
+            self.rect.x += int(self.vx)  # Apply dash velocity
+            for s in level.solids:
+                if self.rect.colliderect(s):
+                    if self.rect.bottom > s.top and self.rect.centery < s.centery:
+                        self.rect.bottom = s.top
+                        self.vy = 0
+                    if self.vx > 0:
+                        self.rect.right = s.left
+                    else:
+                        self.rect.left = s.right
+                    self.vx = 0  # Stop dash on collision
+        else:
+            # Apply gravity for non-dashing states
+            if self.gravity_affected:
+                self.handle_gravity(level)
+        
         # Melee damage is applied via explicit sword hitboxes during actions
 
     # hit method is inherited from Enemy base class
 
-    def draw(self, surf, camera, show_los=False):
+    def draw(self, surf, camera, show_los=False, show_nametags=False):
         if not self.alive: return
         
         # Draw debug vision cone and LOS line
@@ -756,6 +948,9 @@ class Assassin(Enemy):
             # Even darker when not in vision cone for "semi-invisible" effect
             col = (30,30,40) if self.ifr==0 else (20,20,30)
         pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=5)
+        
+        # Draw nametag if enabled
+        self.draw_nametag(surf, camera, show_nametags)
 
 
 class Bee(Enemy):
@@ -768,53 +963,32 @@ class Bee(Enemy):
         self.tele_t = 0
         self.tele_text = ''
         self.action = None
+        self.base_speed = 1.8
+        self.can_jump = False
+        self.gravity_affected = False  # Bees float
+    
+    def _get_terrain_traits(self):
+        """Bee can fly over most terrain"""
+        return ['flying', 'air']
+    
+    def _set_movement_strategy(self):
+        """Set movement strategy for Bee"""
+        self.movement_strategy = MovementStrategyFactory.create_strategy('floating')
 
     def tick(self, level, player):
         if not self.alive: return
         if self.ifr>0: self.ifr-=1
         if self.cool>0: self.cool-=1
-        epos = (self.rect.centerx, self.rect.centery)
+        
+        # Update vision cone and get distance to player
         ppos = (player.rect.centerx, player.rect.centery)
+        dist_to_player = self.update_vision_cone(ppos)
         
-        # Calculate distance to player
-        dx = ppos[0] - epos[0]
-        dy = ppos[1] - epos[1]
-        dist_to_player = (dx*dx + dy*dy) ** 0.5
+        # Check vision cone and line of sight
+        epos = (self.rect.centerx, self.rect.centery)
+        has_los, in_cone = self.check_vision_cone(level, ppos)
         
-        # ADDED: Update facing direction
-        if dist_to_player > 0:
-            # Calculate angle to player
-            angle_to_player = math.atan2(dy, dx)
-            
-            # Update facing if player is within 1.2-1.5x vision_range
-            if dist_to_player < self.vision_range * 1.5:
-                # Smoothly turn toward player
-                angle_diff = (angle_to_player - self.facing_angle) % (2 * math.pi)
-                if angle_diff > math.pi:
-                    angle_diff -= 2 * math.pi
-                self.facing_angle += angle_diff * self.turn_rate
-                
-                # Update facing direction based on angle
-                self.facing = 1 if math.cos(self.facing_angle) > 0 else -1
-            else:
-                # Idle/patrol: subtle oscillation
-                self.facing_angle += 0.02 * self.facing
-                # Flip at bounds
-                if self.facing_angle > math.pi:
-                    self.facing_angle = math.pi
-                    self.facing = -1
-                elif self.facing_angle < 0:
-                    self.facing_angle = 0
-                    self.facing = 1
-        
-        # ADDED: Vision cone check
-        in_cone = in_vision_cone(epos, ppos, self.facing_angle, self.cone_half_angle, self.vision_range)
-        has_los = in_cone and los_clear(level, epos, ppos)
-        
-        # store last LOS check / target for debug drawing
-        self._has_los = has_los
-        self._los_point = ppos
-        
+        # Handle combat behavior
         import random
         if self.tele_t>0:
             self.tele_t -= 1
@@ -822,6 +996,8 @@ class Bee(Enemy):
                 if self.action=='dash':
                     self.vx = 7 if ppos[0]>epos[0] else -7
                 elif self.action=='shoot':
+                    dx = ppos[0] - epos[0]
+                    dy = ppos[1] - epos[1]
                     dist = max(1.0, (dx*dx+dy*dy)**0.5)
                     nx, ny = dx/dist, dy/dist
                     hb = pygame.Rect(0,0,10,6); hb.center = self.rect.center
@@ -832,21 +1008,12 @@ class Bee(Enemy):
             self.tele_t = 14 if self.action=='dash' else 16
             self.tele_text = '!' if self.action=='dash' else '!!'
 
-        # dash decay
-        if abs(self.vx)>0:
-            self.vx *= 0.9
-            if abs(self.vx)<1.0: self.vx=0
-        self.rect.x += int(self.vx)
-        for s in level.solids:
-            if self.rect.colliderect(s):
-                if self.vx>0: self.rect.right=s.left
-                else: self.rect.left=s.right
-                self.vx=0
-        self.rect.y += int(min(10, GRAVITY*2))
-        for s in level.solids:
-            if self.rect.colliderect(s):
-                if self.rect.bottom > s.top and self.rect.centery < s.centery:
-                    self.rect.bottom = s.top
+        # Use new movement system
+        self.handle_movement(level, player)
+        
+        # Apply gravity for non-floating enemies
+        if self.gravity_affected:
+            self.handle_gravity(level)
 
     def hit(self, hb: Hitbox, player: Player):
         if (self.ifr>0 and not getattr(hb,'bypass_ifr',False)) or not self.alive: return
@@ -857,7 +1024,7 @@ class Bee(Enemy):
             self.alive=False
             floating.append(DamageNumber(self.rect.centery, self.rect.centery, "KO", CYAN))
 
-    def draw(self, surf, camera, show_los=False):
+    def draw(self, surf, camera, show_los=False, show_nametags=False):
         if not self.alive: return
         # draw LOS line to last-checked player point if available
         if show_los and getattr(self, '_los_point', None) is not None:
@@ -886,6 +1053,9 @@ class Bee(Enemy):
         if getattr(self, 'tele_t', 0) > 0 and getattr(self, 'tele_text',''):
             from utils import draw_text
             draw_text(surf, self.tele_text, camera.to_screen((self.rect.centerx-4, self.rect.top-10)), (255,100,80), size=18, bold=True)
+        
+        # Draw nametag if enabled
+        self.draw_nametag(surf, camera, show_nametags)
 
 
 class Golem(Enemy):
@@ -898,6 +1068,16 @@ class Golem(Enemy):
         self.tele_t = 0
         self.tele_text = ''
         self.action = None
+        self.base_speed = 0.8
+        self.can_jump = False
+    
+    def _get_terrain_traits(self):
+        """Golem can move through earth and break obstacles"""
+        return ['ground', 'strong', 'destructible', 'fire_resistant']
+    
+    def _set_movement_strategy(self):
+        """Set movement strategy for Golem"""
+        self.movement_strategy = MovementStrategyFactory.create_strategy('ground_patrol')
 
     def tick(self, level, player):
         if not self.alive: return
@@ -979,7 +1159,7 @@ class Golem(Enemy):
             self.alive=False
             floating.append(DamageNumber(self.rect.centery, self.rect.centery, "KO", CYAN))
 
-    def draw(self, surf, camera, show_los=False):
+    def draw(self, surf, camera, show_los=False, show_nametags=False):
         if not self.alive: return
         # draw LOS line to last-checked player point if available
         if show_los and getattr(self, '_los_point', None) is not None:
@@ -1008,3 +1188,6 @@ class Golem(Enemy):
         if getattr(self, 'tele_t', 0) > 0 and getattr(self, 'tele_text',''):
             from utils import draw_text
             draw_text(surf, self.tele_text, camera.to_screen((self.rect.centerx-6, self.rect.top-12)), (255,120,90), size=22, bold=True)
+        
+        # Draw nametag if enabled
+        self.draw_nametag(surf, camera, show_nametags)

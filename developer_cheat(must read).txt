@@ -12,10 +12,11 @@ Hotkeys (during gameplay):
 - F3  — Toggle Enemy Vision Rays
   - Shows/hides enemy line-of-sight visualization for debugging.
 
-- F4  — Open Debugger Menu
-  - Opens the comprehensive debug menu with additional options.
+- F4  — Toggle Enemy Nametags
+  - Shows/hides enemy type nametags above enemies for debugging.
 
-- F5  — Open Debugger Menu (alternative key)
+- F5  — Open Debugger Menu
+  - Opens the comprehensive debug menu with additional options.
 
 - F6  — Go to Room 1
 - F7  — Go to Room 2
@@ -35,6 +36,7 @@ Debugger Menu Features:
 - Give items and equipment directly to inventory
 - Refill all consumables instantly
 - Toggle enemy vision rays
+- Toggle enemy nametags
 
 Where implemented:
 - main.py

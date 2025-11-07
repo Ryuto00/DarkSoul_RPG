@@ -32,10 +32,17 @@ class Game:
         self.cheat_infinite_mana = False
         self.cheat_zero_cooldown = False
         self.debug_enemy_rays = False
+        self.debug_enemy_nametags = False
         self.menu.title_screen()
 
         self.level_index = 0
         self.level = Level(self.level_index)
+        
+        # DEBUG: Initialize terrain system
+        from terrain_system import terrain_system
+        terrain_system.load_terrain_from_level(self.level)
+        print(f"[DEBUG] Terrain system initialized for level {self.level_index}")
+        
         sx, sy = self.level.spawn
         # create player with chosen class
         self.player = Player(sx, sy, cls=self.selected_class)
@@ -47,44 +54,16 @@ class Game:
         # wrap using Level.ROOM_COUNT so new rooms are handled
         self.level_index = (self.level_index + delta) % ROOM_COUNT
         self.level = Level(self.level_index)
+        
+        # DEBUG: Reinitialize terrain system for new level
+        from terrain_system import terrain_system
+        terrain_system.load_terrain_from_level(self.level)
+        print(f"[DEBUG] Terrain system reinitialized for level {self.level_index}")
+        
         sx, sy = self.level.spawn
         self.player.rect.topleft = (sx, sy)
         self.enemies = self.level.enemies
         hitboxes.clear(); floating.clear()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
     def goto_room(self, index):
         # go to an absolute room index (wrapped)
@@ -230,7 +209,7 @@ class Game:
         self.screen.fill(BG)
         self.level.draw(self.screen, self.camera)
         for e in self.enemies:
-            e.draw(self.screen, self.camera, show_los=self.debug_enemy_rays)
+            e.draw(self.screen, self.camera, show_los=self.debug_enemy_rays, show_nametags=self.debug_enemy_nametags)
         for hb in hitboxes:
             hb.draw(self.screen, self.camera)
         self.player.draw(self.screen, self.camera)
@@ -386,6 +365,9 @@ class Game:
                         # toggle enemy vision rays
                         self.debug_enemy_rays = not self.debug_enemy_rays
                     elif ev.key == pygame.K_F4:
+                        # toggle enemy nametags
+                        self.debug_enemy_nametags = not self.debug_enemy_nametags
+                    elif ev.key == pygame.K_F5:
                         # open debugger menu
                         self.debug_menu()
                     elif ev.key == pygame.K_F6:
@@ -417,6 +399,9 @@ class Game:
             {'label': "Enemy Vision Rays (F3)", 'type': 'toggle',
              'getter': lambda: self.debug_enemy_rays,
              'setter': lambda v: setattr(self, 'debug_enemy_rays', v)},
+            {'label': "Enemy Nametags (F4)", 'type': 'toggle',
+             'getter': lambda: self.debug_enemy_nametags,
+             'setter': lambda v: setattr(self, 'debug_enemy_nametags', v)},
             {'label': "Infinite Mana", 'type': 'toggle',
              'getter': lambda: self.cheat_infinite_mana,
              'setter': lambda v: setattr(self, 'cheat_infinite_mana', v)},
