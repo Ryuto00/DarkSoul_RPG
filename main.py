@@ -5,7 +5,7 @@ from config import WIDTH, HEIGHT, FPS, BG, WHITE, CYAN, GREEN, WALL_JUMP_AIRBORN
 from utils import draw_text, get_font
 from camera import Camera
 from level import Level, ROOM_COUNT
-from entities import Player, hitboxes, floating
+from entities import Player, hitboxes, floating, DamageNumber
 from inventory import Inventory
 from menu import Menu
 from shop import Shop
@@ -262,8 +262,10 @@ class Game:
                 draw_text(self.screen, "!", (x + 124, y-6), (255,80,80), size=18, bold=True)
             y += 12
 
+        # show room number above class on HUD
+        draw_text(self.screen, f"Room {self.level_index+1}/{ROOM_COUNT}", (WIDTH-220, 8), WHITE, size=16)
         # show selected class on HUD
-        draw_text(self.screen, f"Class: {getattr(self.player, 'cls', 'Unknown')}", (WIDTH-220, 8), (200,200,200), size=16)
+        draw_text(self.screen, f"Class: {getattr(self.player, 'cls', 'Unknown')}", (WIDTH-220, 28), (200,200,200), size=16)
 
         # Skill bar (MOBA-style): show 1/2/3 cooldowns and active highlights
         sbx, sby = 16, HEIGHT - 80
@@ -314,11 +316,10 @@ class Game:
             draw_text(self.screen, f"Cavern Brew {secs}s", (WIDTH-180, HEIGHT-160), (150,255,180), size=16, bold=True)
 
         draw_text(self.screen,
-                  "Move A/D | Jump Space/K | Dash Shift/J | Attack L/Mouse | Up/Down+Attack for Up/Down slash (Down=Pogo)",
+                  "Move A/D | Jump Space/K | Dash Shift/J | Attack L/Mouse | Up/Down+Attack for Up/Down slash (Down=Pogo) | Shop F6",
                   (12, HEIGHT-28), (180,180,200), size=16)
-        draw_text(self.screen, f"Room {self.level_index+1}/{ROOM_COUNT}", (12, 8), WHITE)
-        # Money display
-        draw_text(self.screen, f"Coins: {self.player.money}", (WIDTH-150, 8), (255, 215, 0), bold=True)
+        # Money display moved to be under class
+        draw_text(self.screen, f"Coins: {self.player.money}", (WIDTH-220, 48), (255, 215, 0), bold=True)
         if getattr(self.player, 'god', False):
             draw_text(self.screen, "GOD", (WIDTH-64, 8), (255,200,80), bold=True)
         # Boss room hint: lock door until boss defeated
@@ -341,10 +342,17 @@ class Game:
                 if ev.type == pygame.QUIT:
                     pygame.quit(); sys.exit()
                 elif ev.type == pygame.MOUSEBUTTONDOWN:
-                    if self.inventory.inventory_open and ev.button == 1:
-                        self.inventory._handle_inventory_click(ev.pos)
+                    if ev.button == 1:  # Left click
+                        if self.inventory.inventory_open:
+                            self.inventory._handle_inventory_click(ev.pos)
+                        elif self.shop.shop_open:
+                            self.shop.handle_mouse_click(ev.pos)
                     continue
                 elif ev.type == pygame.KEYDOWN:
+                    # Handle shop input first when shop is open
+                    if self.shop.shop_open:
+                        self.shop.handle_event(ev)
+                        continue
                     if ev.key == pygame.K_i:
                         if not self.shop.shop_open:
                             self.inventory.inventory_open = not self.inventory.inventory_open
@@ -370,8 +378,12 @@ class Game:
                     if used_consumable:
                         continue
                     if ev.key == pygame.K_ESCAPE:
-                        # open pause menu instead of quitting
-                        self.menu.pause_menu()
+                        # Check if shop is open first, then close it instead of opening pause menu
+                        if self.shop.shop_open:
+                            self.shop.close_shop()
+                        else:
+                            # open pause menu instead of quitting
+                            self.menu.pause_menu()
                     # Developer cheats
                     elif ev.key == pygame.K_F1:
                         # toggle god mode
@@ -389,29 +401,36 @@ class Game:
                         # open debugger menu
                         self.debug_menu()
                     elif ev.key == pygame.K_F6:
-                        self.goto_room(1)
-                    elif ev.key == pygame.K_F7:
-                        self.goto_room(2)
-                    elif ev.key == pygame.K_F8:
-                        self.goto_room(3)
-                    elif ev.key == pygame.K_F9:
-                        self.goto_room(4)
-                    elif ev.key == pygame.K_F10:
-                        self.goto_room(5)
-                    elif ev.key == pygame.K_s and not self.inventory.inventory_open:
-                        # Toggle shop
-                        if self.shop.shop_open:
-                            self.shop.close_shop()
-                        else:
-                            self.shop.open_shop()
+                        # Toggle shop (moved from S key)
+                        if not self.inventory.inventory_open:
+                            if self.shop.shop_open:
+                                self.shop.close_shop()
+                            else:
+                                self.shop.open_shop()
                         continue
+                    elif ev.key == pygame.K_F7:
+                        # Add 1000 money
+                        self.player.money += 1000
+                        floating.append(DamageNumber(
+                            self.player.rect.centerx,
+                            self.player.rect.top - 12,
+                            "+1000 coins!",
+                            (255, 215, 0)
+                        ))
+                        continue
+                    elif ev.key == pygame.K_F8:
+                        self.goto_room(1)
+                    elif ev.key == pygame.K_F9:
+                        self.goto_room(2)
+                    elif ev.key == pygame.K_F10:
+                        self.goto_room(3)
+                    elif ev.key == pygame.K_F11:
+                        self.goto_room(4)
+                    elif ev.key == pygame.K_F12:
+                        self.goto_room(5)
 
             if not self.inventory.inventory_open and not self.shop.shop_open:
                 self.update()
-            
-            # Handle shop input when open
-            if self.shop.shop_open:
-                self.shop.handle_input()
             
             self.draw()
             pygame.display.flip()
