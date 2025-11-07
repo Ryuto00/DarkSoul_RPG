@@ -177,6 +177,21 @@ class Player:
         # consumable buffs
         self.speed_potion_timer = 0
         self.speed_potion_bonus = 0.0
+        self.jump_boost_timer = 0
+        self.jump_force_multiplier = 1.0
+        self.extra_jump_charges = 0
+        self.stamina_boost_timer = 0
+        self.stamina_buff_mult = 1.0
+        self._base_stats = {
+            'max_hp': float(self.max_hp),
+            'attack_damage': float(self.attack_damage),
+            'player_speed': float(self.player_speed),
+            'player_air_speed': float(self.player_air_speed),
+            'max_mana': float(getattr(self, 'max_mana', 0.0)),
+            'max_stamina': float(getattr(self, 'max_stamina', 0.0)),
+            'stamina_regen': float(getattr(self, '_stamina_regen', 0.0)),
+            'mana_regen': float(getattr(self, '_mana_regen', 0.0)),
+        }
     def input(self, level, camera):
         if self.dead:
             return
@@ -546,7 +561,7 @@ class Player:
 
         if self.on_ground:
             self.coyote = COYOTE_FRAMES
-            self.double_jumps = DOUBLE_JUMPS
+            self.double_jumps = DOUBLE_JUMPS + int(getattr(self, 'extra_jump_charges', 0))
             self.can_dash = True if self.dash_cd == 0 else self.can_dash
         else:
             self.coyote = max(0, self.coyote-1)
@@ -567,18 +582,19 @@ class Player:
             self.vy = WALL_SLIDE_MAX
 
         want_jump = self.jump_buffer > 0
+        jump_mult = getattr(self, 'jump_force_multiplier', 1.0)
         if want_jump:
             did = False
             if self.on_ground or self.coyote > 0:
-                self.vy = PLAYER_JUMP_V
+                self.vy = PLAYER_JUMP_V * jump_mult
                 did = True
             elif self.sliding_wall != 0:
-                self.vy = WALL_JUMP_VY
+                self.vy = WALL_JUMP_VY * jump_mult
                 self.vx = -self.sliding_wall * WALL_JUMP_VX
                 self.facing = -self.sliding_wall
                 did = True
             elif self.double_jumps > 0:
-                self.vy = PLAYER_JUMP_V
+                self.vy = PLAYER_JUMP_V * jump_mult
                 self.double_jumps -= 1
                 did = True
             if did:
@@ -648,6 +664,17 @@ class Player:
             if self.speed_potion_timer <= 0:
                 self.speed_potion_timer = 0
                 self.speed_potion_bonus = 0.0
+        if self.jump_boost_timer > 0:
+            self.jump_boost_timer -= 1
+            if self.jump_boost_timer <= 0:
+                self.jump_boost_timer = 0
+                self.jump_force_multiplier = 1.0
+                self.extra_jump_charges = 0
+        if self.stamina_boost_timer > 0:
+            self.stamina_boost_timer -= 1
+            if self.stamina_boost_timer <= 0:
+                self.stamina_boost_timer = 0
+                self.stamina_buff_mult = 1.0
 
         self.move_and_collide(level)
 
