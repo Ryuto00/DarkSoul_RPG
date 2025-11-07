@@ -259,14 +259,22 @@ class Enemy:
     
     def handle_gravity(self, level, gravity_multiplier=2.0):
         """Apply gravity and handle ground collision."""
-        # Apply gravity
+        # Apply gravity to velocity first, then position
+        self.vy = getattr(self, 'vy', 0) + min(GRAVITY * gravity_multiplier, 10)
+        
+        # Apply gravity to position
         old_y = self.rect.y
-        self.rect.y += int(min(10, GRAVITY * gravity_multiplier))
+        self.rect.y += int(min(10, self.vy))
+        
+        was_on_ground = getattr(self, 'on_ground', False)
+        self.on_ground = False  # Reset ground detection
         
         for s in level.solids:
             if self.rect.colliderect(s):
                 if self.rect.bottom > s.top and self.rect.centery < s.centery:
                     self.rect.bottom = s.top
+                    self.vy = 0  # Reset velocity when landing
+                    self.on_ground = True
     
     def handle_player_collision(self, player, damage=1, knockback=(2, -6)):
         """Handle collision with player."""
@@ -752,14 +760,17 @@ class WizardCaster(Enemy):
         self.movement_strategy = MovementStrategyFactory.create_strategy('floating')
 
     def tick(self, level, player):
-        if not self.alive: return
+        if not self.alive:
+            return
         
         # Handle common status effects
         self.handle_status_effects()
         
         # Update invincibility frames
-        if self.ifr>0: self.ifr-=1
-        if self.cool>0: self.cool-=1
+        if self.ifr > 0:
+            self.ifr -= 1
+        if self.cool > 0:
+            self.cool -= 1
         
         # Update vision cone and get distance to player
         ppos = (player.rect.centerx, player.rect.centery)
@@ -769,9 +780,10 @@ class WizardCaster(Enemy):
         epos = (self.rect.centerx, self.rect.centery)
         has_los, in_cone = self.check_vision_cone(level, ppos)
         
-        if self.tele_t>0:
+        # Casting logic (unchanged behavior-wise)
+        if self.tele_t > 0:
             self.tele_t -= 1
-            if self.tele_t==0 and has_los and dist_to_player < self.vision_range:
+            if self.tele_t == 0 and has_los and dist_to_player < self.vision_range:
                 dx = ppos[0] - epos[0]
                 dy = ppos[1] - epos[1]
                 dist = max(1.0, (dx*dx+dy*dy)**0.5)
@@ -789,13 +801,16 @@ class WizardCaster(Enemy):
                     hitboxes.append(Hitbox(hb, 90, 1, self, dir_vec=(nx,ny), vx=nx*9.0, vy=ny*9.0))
                     self.cool = 50
                 self.action = None
-        elif has_los and self.cool==0 and dist_to_player < self.vision_range:
+        elif has_los and self.cool == 0 and dist_to_player < self.vision_range:
             import random
             self.action = random.choices(['bolt','missile','fireball'], weights=[0.5,0.3,0.2])[0]
             self.tele_t = 16
             self.tele_text = '!!'
-        # Use new movement system instead of just gravity
+        
+        # Movement: shared floating strategy + global clamp
+        from enemy_movement import clamp_enemy_to_level
         self.handle_movement(level, player)
+        clamp_enemy_to_level(self, level, respect_solids=True)  # FIXED: Now respects solid collisions
 
     # hit method is inherited from Enemy base class
 
@@ -822,7 +837,7 @@ class Assassin(Enemy):
     """Semi-invisible melee dash enemy."""
     def __init__(self, x, ground_y):
         super().__init__(x, ground_y, width=28, height=22, hp=20,
-                        vision_range=240, cone_half_angle=math.pi/8, turn_rate=0.06)
+                        vision_range=240, cone_half_angle=math.pi/4, turn_rate=0.06)  # Wider vision cone (45 degrees)
         # Assassin-specific properties
         self.state = 'idle'
         self.tele_t = 0
@@ -831,6 +846,7 @@ class Assassin(Enemy):
         self.dash_t = 0
         self.base_speed = 2.0
         self.can_jump = True
+        self.jump_cooldown = 0  # Prevent continuous jumping
     
     def _get_terrain_traits(self):
         """Assassin can move through narrow spaces and jump"""
@@ -838,67 +854,134 @@ class Assassin(Enemy):
     
     def _set_movement_strategy(self):
         """Set movement strategy for Assassin"""
-        self.movement_strategy = MovementStrategyFactory.create_strategy('ground_patrol')
+        # Assassin uses custom movement logic, not standard strategies
+        self.movement_strategy = None
 
     def tick(self, level, player):
-        if not self.alive: return
-        
+        if not self.alive:
+            return
+         
         # Handle common status effects
         self.handle_status_effects()
-        
-        # Update invincibility frames
-        if self.ifr>0: self.ifr-=1
-        if self.cool>0: self.cool-=1
-        
+         
+        # Update timers
+        if self.ifr > 0:
+            self.ifr -= 1
+        if self.cool > 0:
+            self.cool -= 1
+        if getattr(self, 'jump_cooldown', 0) > 0:
+            self.jump_cooldown -= 1
+         
         # Update vision cone and get distance to player
         ppos = (player.rect.centerx, player.rect.centery)
         dist_to_player = self.update_vision_cone(ppos)
-        
+         
         # Check vision cone and line of sight
         epos = (self.rect.centerx, self.rect.centery)
         has_los, in_cone = self.check_vision_cone(level, ppos)
-        
+         
         # Store for drawing
         self._in_cone = in_cone
-        
-        facing = self.facing
-        if self.tele_t>0:
+         
+        from enemy_movement import clamp_enemy_to_level
+         
+        # Telegraph -> choose dash or slash
+        if self.tele_t > 0:
             self.tele_t -= 1
-            if self.tele_t==0:
+            if self.tele_t == 0:
                 if self.action == 'dash':
-                    # diagonal dash toward player
-                    dx = ppos[0]-epos[0]; dy = ppos[1]-epos[1]
-                    dist = max(1.0, (dx*dx+dy*dy)**0.5)
-                    nx, ny = dx/dist, dy/dist
+                    # Compute dash velocity TOWARD player at telegraph end
+                    dx = ppos[0] - epos[0]
+                    dy = ppos[1] - epos[1]
+                    dist = max(1.0, (dx*dx + dy*dy) ** 0.5)
+                    nx, ny = dx / dist, dy / dist
+                    old_vx, old_vy = self.vx, self.vy
                     self.vx = nx * 7.5
                     self.vy = ny * 7.5
                     self.dash_t = 18
                     self.state = 'dash'
+                    # Face dash direction
+                    self.facing = 1 if self.vx >= 0 else -1
                 elif self.action == 'slash':
-                    # spawn a sword hitbox forward
-                    hb = pygame.Rect(0, 0, int(self.rect.w*1.2), int(self.rect.h*0.7))
-                    if facing > 0:
+                    # Instant close slash in facing direction
+                    hb = pygame.Rect(0, 0, int(self.rect.w * 1.2), int(self.rect.h * 0.7))
+                    if self.facing > 0:
                         hb.midleft = (self.rect.right, self.rect.centery)
                     else:
                         hb.midright = (self.rect.left, self.rect.centery)
-                    hitboxes.append(Hitbox(hb, 10, 1, self, dir_vec=(facing,0)))
+                    hitboxes.append(Hitbox(hb, 10, 1, self, dir_vec=(self.facing, 0)))
                     self.cool = 48
                     self.action = None
-        elif self.state=='dash':
-            # while dashing, keep spawning short sword hitboxes forward
-            hb = pygame.Rect(0, 0, int(self.rect.w*1.1), int(self.rect.h*0.6))
-            if facing > 0:
+        elif self.state == 'dash':
+            # While dashing, emit short sword hitboxes in dash direction
+            hb = pygame.Rect(0, 0, int(self.rect.w * 1.1), int(self.rect.h * 0.6))
+            if self.facing > 0:
                 hb.midleft = (self.rect.right, self.rect.centery)
             else:
                 hb.midright = (self.rect.left, self.rect.centery)
-            hitboxes.append(Hitbox(hb, 6, 1, self, dir_vec=(facing,0)))
+            hitboxes.append(Hitbox(hb, 6, 1, self, dir_vec=(self.facing, 0)))
+             
+            # Apply gravity first, then move, then resolve collisions
+            # Always apply gravity during dash - don't depend on on_ground flag
+            old_vy = getattr(self, 'vy', 0)
+            self.vy = old_vy + min(GRAVITY, 10)
+            
+            # Update position
+            old_rect = self.rect.copy()
+            self.rect.x += int(self.vx)
+            self.rect.y += int(min(10, self.vy))
+             
+            # Resolve collisions against solids so we don't phase through
+            was_on_ground = getattr(self, 'on_ground', False)
+            self.on_ground = False  # Reset ground detection
+            
+            for s in level.solids:
+                if self.rect.colliderect(s):
+                    # Vertical resolution
+                    if self.rect.bottom > s.top and old_rect.bottom <= s.top and self.rect.centery < s.centery:
+                        self.rect.bottom = s.top
+                        self.vy = 0
+                        self.on_ground = True
+                    elif self.rect.top < s.bottom and old_rect.top >= s.bottom and self.rect.centery > s.centery:
+                        self.rect.top = s.bottom
+                        self.vy = 0
+                    # Horizontal resolution
+                    if self.vx > 0 and old_rect.right <= s.left and self.rect.right > s.left:
+                        self.rect.right = s.left
+                        self.vx = 0
+                    elif self.vx < 0 and old_rect.left >= s.right and self.rect.left < s.right:
+                        self.rect.left = s.right
+                        self.vx = 0
+             
+            # Global clamp to map bounds only (platform clipping already resolved above)
+            clamp_enemy_to_level(self, level, respect_solids=False)
+             
             if self.dash_t > 0:
                 self.dash_t -= 1
             else:
-                self.vx *= 0.9
-                if abs(self.vx)<1.0:
-                    self.state='idle'; self.cool=60
-        elif has_los and self.cool==0 and dist_to_player < self.vision_range:
+                # End dash cleanly - ensure proper state transition
+                # Force transition to idle immediately
+                self.state = 'idle'
+                self.cool = 60
+                self.action = None
+                
+                # Ensure proper physics when ending dash
+                if getattr(self, 'on_ground', False):
+                    self.vy = 0
+                else:
+                    # If ending in air, ensure gravity will be applied in next frame
+                    # by not setting vy to 0
+                    pass
+                
+                # Reduce horizontal velocity
+                self.vx *= 0.6
+                if abs(self.vx) < 0.8:
+                    self.vx = 0
+                
+                # IMPORTANT: Return immediately to prevent further dash execution
+                return
+        elif has_los and self.cool == 0 and dist_to_player < self.vision_range:
+            # Decide next attack
             import random
             self.action = 'dash' if random.random() < 0.5 else 'slash'
             if self.action == 'dash':
@@ -907,31 +990,56 @@ class Assassin(Enemy):
             else:
                 self.tele_t = 12
                 self.tele_text = '!!'
-        
-        # Use new movement system for basic movement
-        if self.state != 'dash':  # Don't override dash movement
-            self.handle_movement(level, player)
-        
-        # Handle vertical velocity for dash (separate from movement system)
-        if self.state == 'dash':
-            self.vy = getattr(self, 'vy', 0) + min(GRAVITY, 10)
-            self.rect.y += int(min(10, self.vy))
-            self.rect.x += int(self.vx)  # Apply dash velocity
-            for s in level.solids:
-                if self.rect.colliderect(s):
-                    if self.rect.bottom > s.top and self.rect.centery < s.centery:
-                        self.rect.bottom = s.top
-                        self.vy = 0
-                    if self.vx > 0:
-                        self.rect.right = s.left
-                    else:
-                        self.rect.left = s.right
-                    self.vx = 0  # Stop dash on collision
         else:
-            # Apply gravity for non-dashing states
+            # Use custom assassin movement when not dashing/telegraphing
+            # Custom assassin patrol/pursuit logic
+            if has_los and dist_to_player < self.vision_range:
+                # Pursue player directly when in LOS
+                dx = ppos[0] - epos[0]
+                dy = ppos[1] - epos[1]
+                
+                # Move toward player
+                if abs(dx) > 5:
+                    self.vx = 2.0 if dx > 0 else -2.0
+                else:
+                    self.vx = 0
+                    
+                # Jump toward player if they're above and assassin is on ground and not on cooldown
+                jump_cooldown = getattr(self, 'jump_cooldown', 0)
+                if (hasattr(self, 'can_jump') and self.can_jump and dy < -50 and
+                    getattr(self, 'on_ground', False) and jump_cooldown <= 0):
+                    self.vy = -10
+                    self.on_ground = False
+                    self.jump_cooldown = 30  # Prevent jumping for 0.5 seconds
+                else:
+                    # Debug why jump is not happening
+                    if hasattr(self, 'can_jump') and self.can_jump and dy < -50 and getattr(self, 'on_ground', False):
+                        # Jump conditions not met
+                        pass
+            else:
+                # Patrol behavior when no LOS
+                import random as rnd
+                if not hasattr(self, 'patrol_direction') or rnd.random() < 0.02:
+                    self.patrol_direction = rnd.choice([-1.5, 0, 1.5])
+                else:
+                    # Initialize patrol_direction if it doesn't exist
+                    if not hasattr(self, 'patrol_direction'):
+                        self.patrol_direction = 0
+                
+                self.vx = self.patrol_direction
+                if self.vx == 0:
+                    self.vx = rnd.choice([-1.0, 1.0]) * 0.5
+            
+            # Apply gravity and handle collisions
             if self.gravity_affected:
+                old_vy = getattr(self, 'vy', 0)
                 self.handle_gravity(level)
-        
+                new_vy = getattr(self, 'vy', 0)
+                if old_vy == new_vy and new_vy == 0:
+                    # Velocity stuck at 0 - handled silently
+                    pass
+            clamp_enemy_to_level(self, level, respect_solids=False)
+         
         # Melee damage is applied via explicit sword hitboxes during actions
 
     # hit method is inherited from Enemy base class
@@ -978,9 +1086,12 @@ class Bee(Enemy):
         self.movement_strategy = MovementStrategyFactory.create_strategy('floating')
 
     def tick(self, level, player):
-        if not self.alive: return
-        if self.ifr>0: self.ifr-=1
-        if self.cool>0: self.cool-=1
+        if not self.alive:
+            return
+        if self.ifr > 0:
+            self.ifr -= 1
+        if self.cool > 0:
+            self.cool -= 1
         
         # Update vision cone and get distance to player
         ppos = (player.rect.centerx, player.rect.centery)
@@ -992,12 +1103,13 @@ class Bee(Enemy):
         
         # Handle combat behavior
         import random
-        if self.tele_t>0:
+        if self.tele_t > 0:
             self.tele_t -= 1
-            if self.tele_t==0 and has_los and dist_to_player < self.vision_range:
-                if self.action=='dash':
-                    self.vx = 7 if ppos[0]>epos[0] else -7
-                elif self.action=='shoot':
+            if self.tele_t == 0 and has_los and dist_to_player < self.vision_range:
+                if self.action == 'dash':
+                    # Dash horizontally toward player
+                    self.vx = 7 if ppos[0] > epos[0] else -7
+                elif self.action == 'shoot':
                     dx = ppos[0] - epos[0]
                     dy = ppos[1] - epos[1]
                     dist = max(1.0, (dx*dx+dy*dy)**0.5)
@@ -1005,17 +1117,15 @@ class Bee(Enemy):
                     hb = pygame.Rect(0,0,10,6); hb.center = self.rect.center
                     hitboxes.append(Hitbox(hb, 120, 1, self, dir_vec=(nx,ny), vx=nx*7.5, vy=ny*7.5))
                 self.cool = 50
-        elif has_los and self.cool==0 and dist_to_player < self.vision_range:
-            self.action = 'dash' if random.random()<0.5 else 'shoot'
-            self.tele_t = 14 if self.action=='dash' else 16
-            self.tele_text = '!' if self.action=='dash' else '!!'
-
-        # Use new movement system
-        self.handle_movement(level, player)
+        elif has_los and self.cool == 0 and dist_to_player < self.vision_range:
+            self.action = 'dash' if random.random() < 0.5 else 'shoot'
+            self.tele_t = 14 if self.action == 'dash' else 16
+            self.tele_text = '!' if self.action == 'dash' else '!!'
         
-        # Apply gravity for non-floating enemies
-        if self.gravity_affected:
-            self.handle_gravity(level)
+        # Use new movement system (floating for Bee) + global clamp
+        from enemy_movement import clamp_enemy_to_level
+        self.handle_movement(level, player)
+        clamp_enemy_to_level(self, level, respect_solids=True)  # FIXED: Now respects solid collisions
 
     def hit(self, hb: Hitbox, player: Player):
         if (self.ifr>0 and not getattr(hb,'bypass_ifr',False)) or not self.alive: return

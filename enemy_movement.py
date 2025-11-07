@@ -29,6 +29,75 @@ class MovementStrategy(ABC):
         return True
 
 
+def clamp_enemy_to_level(enemy, level, respect_solids: bool = False) -> None:
+    """
+    Global safety clamp for ALL enemies (Bee/Wizard/Assassin/etc).
+
+    Goals:
+    - Prevent enemies from leaving map boundaries.
+    - Optionally prevent clipping through normal solids when respect_solids=True.
+    - Keep attack-specific motion (dash/teleport) mostly intact, only fix illegal positions.
+
+    Behavior:
+    - Always enforces horizontal bounds [0, level.w * TILE].
+    - Always enforces vertical top >= 0.
+    - If respect_solids:
+        - Nudge enemy out of overlapping solids on both axes.
+    - Emits concise debug logs when correction is applied to help verify behavior.
+    """
+    level_width_px = getattr(level, "w", 0) * TILE if hasattr(level, "w") else 0
+    solids = getattr(level, "solids", [])
+
+    old = enemy.rect.copy()
+    corrected = False
+
+    # Horizontal map bounds
+    if level_width_px > 0:
+        if enemy.rect.left < 0:
+            enemy.rect.left = 0
+            enemy.vx = abs(getattr(enemy, "vx", 0))
+            corrected = True
+        elif enemy.rect.right > level_width_px:
+            enemy.rect.right = level_width_px
+            enemy.vx = -abs(getattr(enemy, "vx", 0))
+            corrected = True
+
+    # Vertical top bound
+    if enemy.rect.top < 0:
+        enemy.rect.top = 0
+        vy = getattr(enemy, "vy", 0)
+        enemy.vy = max(0, vy)
+        corrected = True
+
+    # Optional solid resolution
+    if respect_solids and solids:
+        for s in solids:
+            if enemy.rect.colliderect(s):
+                # Resolve vertical first
+                if enemy.rect.bottom > s.top and old.bottom <= s.top:
+                    enemy.rect.bottom = s.top
+                    enemy.vy = min(0, getattr(enemy, "vy", 0))
+                    corrected = True
+                elif enemy.rect.top < s.bottom and old.top >= s.bottom:
+                    enemy.rect.top = s.bottom
+                    enemy.vy = max(0, getattr(enemy, "vy", 0))
+                    corrected = True
+
+                # Horizontal resolution
+                if enemy.rect.right > s.left and old.right <= s.left:
+                    enemy.rect.right = s.left
+                    enemy.vx = min(0, getattr(enemy, "vx", 0))
+                    corrected = True
+                elif enemy.rect.left < s.right and old.left >= s.right:
+                    enemy.rect.left = s.right
+                    enemy.vx = max(0, getattr(enemy, "vx", 0))
+                    corrected = True
+
+    if corrected:
+        # Position correction applied
+        pass
+
+
 class GroundPatrolStrategy(MovementStrategy):
     """Basic ground patrol with pursuit - for Bug, Boss"""
     
@@ -145,19 +214,16 @@ class GroundPatrolStrategy(MovementStrategy):
         if enemy.rect.top < 0:
             enemy.rect.top = 0
             enemy.vy = 0
-            # print(f"[DEBUG] GroundPatrol: {enemy.__class__.__name__} hit top boundary")
         if enemy.rect.left < 0:
             enemy.rect.left = 0
             enemy.vx = abs(enemy.vx)
-            # print(f"[DEBUG] GroundPatrol: {enemy.__class__.__name__} hit left boundary")
         elif enemy.rect.right > level.w * TILE:
             enemy.rect.right = level.w * TILE
             enemy.vx = -abs(enemy.vx)
-            # print(f"[DEBUG] GroundPatrol: {enemy.__class__.__name__} hit right boundary")
         
-        # Log position changes only when significant
+        # Position changes tracked silently
         if old_pos != (enemy.rect.x, enemy.rect.y) and (abs(old_pos[0] - enemy.rect.x) > 5 or abs(old_pos[1] - enemy.rect.y) > 5):
-            print(f"[DEBUG] GroundPatrol: {enemy.__class__.__name__} moved from {old_pos} to ({enemy.rect.x}, {enemy.rect.y})")
+            pass
 
 
 class JumpingStrategy(MovementStrategy):
@@ -239,7 +305,6 @@ class JumpingStrategy(MovementStrategy):
                     if enemy.rect.top < solid.bottom and enemy.rect.centery > solid.centery:
                         enemy.rect.top = solid.bottom
                         enemy.vy = 0
-                        print(f"[DEBUG] Jumping: {enemy.__class__.__name__} hit ceiling")
         
         # Keep enemy in bounds
         if enemy.rect.top < 0:
@@ -263,36 +328,57 @@ class RangedTacticalStrategy(MovementStrategy):
         self.optimal_distance = 200  # Optimal distance from player
     
     def move(self, enemy, level, player, context: Dict[str, Any]) -> None:
-        """Tactical movement to maintain optimal distance"""
+        """Tactical movement to maintain optimal distance with safe, visible behavior.
+
+        Reset: keep this strategy simple + robust so Archers don't vanish or clip.
+        """
+        if not player:
+            return
+
         epos = (enemy.rect.centerx, enemy.rect.centery)
         ppos = (player.rect.centerx, player.rect.centery)
-        
-        distance = context.get('distance_to_player', 0)
+
+        distance = context.get('distance_to_player', 0.0)
         has_los = context.get('has_los', False)
-        
-        print(f"[DEBUG] RangedTactical: {enemy.__class__.__name__} distance={distance}, has_los={has_los}")
-        
+
+        # Base speeds — keep moderate so behavior is readable
+        approach_speed = 1.0
+        retreat_speed = 1.0
+        strafe_speed = 0.6
+
+        desired_vx = 0.0
+
         if has_los:
-            # Maintain optimal distance
+            # 1) Maintain distance band
             if distance < self.optimal_distance * 0.7:
-                # Too close, back away
-                print(f"[DEBUG] RangedTactical: {enemy.__class__.__name__} too close, backing away")
-                self._strafe_away(enemy, ppos, level)
+                # Too close -> back away
+                dx = epos[0] - ppos[0]
+                if abs(dx) > 2:
+                    desired_vx = (1 if dx > 0 else -1) * retreat_speed
             elif distance > self.optimal_distance * 1.3:
-                # Too far, get closer
-                print(f"[DEBUG] RangedTactical: {enemy.__class__.__name__} too far, approaching")
-                self._approach_cautiously(enemy, ppos, level)
+                # Too far -> approach
+                dx = ppos[0] - epos[0]
+                if abs(dx) > 2:
+                    desired_vx = (1 if dx > 0 else -1) * approach_speed
             else:
-                # Good distance, strafe
-                print(f"[DEBUG] RangedTactical: {enemy.__class__.__name__} good distance, strafing")
-                self._strafe_sideways(enemy, ppos, level)
+                # In a good band -> mild random strafe
+                side = random.choice([-1, 1])
+                desired_vx = side * strafe_speed
         else:
-            # No line of sight, find better position
-            print(f"[DEBUG] RangedTactical: {enemy.__class__.__name__} no LOS, finding vantage point")
-            self._find_vantage_point(enemy, ppos, level)
-        
-        # Apply basic physics
+            # No LOS: small nudge toward player horizontally so they don't drift offscreen forever
+            dx = ppos[0] - epos[0]
+            if abs(dx) > 16:
+                desired_vx = (1 if dx > 0 else -1) * 0.6
+
+        # Apply ledge-aware horizontal intent ONLY; physics handles the rest
+        self._set_safe_horizontal_velocity(enemy, level, desired_vx)
+
+        # Apply physics & collisions
         self._handle_basic_physics(enemy, level)
+
+        # Safety clamps to prevent extreme speeds if something else tampers with vx/vy
+        enemy.vx = max(-4.0, min(4.0, enemy.vx))
+        enemy.vy = max(-16.0, min(16.0, enemy.vy))
     
     def _strafe_away(self, enemy, player_pos, level):
         """Move away from player while maintaining facing"""
@@ -302,8 +388,9 @@ class RangedTacticalStrategy(MovementStrategy):
         
         if distance > 0:
             # Move directly away
-            enemy.vx = (dx / distance) * 1.5
-            enemy.vy = (dy / distance) * 0.5  # Less vertical movement
+            self._set_safe_horizontal_velocity(enemy, level, (dx / distance) * 1.5)
+            if not self._is_gravity_bound(enemy):
+                enemy.vy = (dy / distance) * 0.5  # Floaters can adjust vertically
     
     def _approach_cautiously(self, enemy, player_pos, level):
         """Approach player cautiously"""
@@ -312,8 +399,9 @@ class RangedTacticalStrategy(MovementStrategy):
         distance = math.sqrt(dx*dx + dy*dy)
         
         if distance > 0:
-            enemy.vx = (dx / distance) * 1.0
-            enemy.vy = 0  # Don't approach vertically
+            self._set_safe_horizontal_velocity(enemy, level, (dx / distance) * 1.0)
+            if not self._is_gravity_bound(enemy):
+                enemy.vy = 0  # Floating units can null vertical drift
     
     def _strafe_sideways(self, enemy, player_pos, level):
         """Strafe sideways to maintain distance"""
@@ -329,8 +417,9 @@ class RangedTacticalStrategy(MovementStrategy):
         if length > 0:
             # Randomly choose left or right strafe
             direction = random.choice([-1, 1])
-            enemy.vx = (perp_x / length) * 1.2 * direction
-            enemy.vy = 0
+            self._set_safe_horizontal_velocity(enemy, level, (perp_x / length) * 1.2 * direction)
+            if not self._is_gravity_bound(enemy):
+                enemy.vy = 0
     
     def _find_vantage_point(self, enemy, player_pos, level):
         """Find a better position with line of sight"""
@@ -348,124 +437,258 @@ class RangedTacticalStrategy(MovementStrategy):
                 distance = math.sqrt(dx*dx + dy*dy)
                 
                 if distance > 0:
-                    enemy.vx = (dx / distance) * 1.0
-                    enemy.vy = (dy / distance) * 0.5
-                    print(f"[DEBUG] RangedTactical: {enemy.__class__.__name__} moving to vantage point, vx={enemy.vx}, vy={enemy.vy}")
+                    self._set_safe_horizontal_velocity(enemy, level, (dx / distance) * 1.0)
+                    if not self._is_gravity_bound(enemy):
+                        enemy.vy = (dy / distance) * 0.5
                 return
         
         # No good position found, stay put
-        enemy.vx = 0
-        enemy.vy = 0
-        print(f"[DEBUG] RangedTactical: {enemy.__class__.__name__} no vantage point found, staying put")
+        self._set_safe_horizontal_velocity(enemy, level, 0)
+        if not self._is_gravity_bound(enemy):
+            enemy.vy = 0
     
     def _handle_basic_physics(self, enemy, level):
-        """Basic physics for ranged enemies"""
+        """Basic physics for ranged enemies.
+
+        Simplified + clamped to prevent jitter and out-of-bounds for Archers.
+        """
         old_pos = (enemy.rect.x, enemy.rect.y)
-        
+
         # Apply gravity
-        enemy.vy = min(enemy.vy + GRAVITY * 0.5, 15)
-        
-        # Update position
+        if getattr(enemy, 'gravity_affected', True):
+            enemy.vy = min(enemy.vy + GRAVITY * 0.5, 12)
+        enemy.on_ground = False
+
+        # Integrate velocity
         enemy.rect.x += int(enemy.vx)
         enemy.rect.y += int(enemy.vy)
-        
-        # DEBUG: Log position changes
-        if old_pos != (enemy.rect.x, enemy.rect.y):
-            print(f"[DEBUG] RangedTactical: {enemy.__class__.__name__} moved from {old_pos} to ({enemy.rect.x}, {enemy.rect.y})")
-        
-        # Handle collisions
+
+        # Collide with solids
         for solid in level.solids:
             if enemy.rect.colliderect(solid):
-                # Horizontal collision
-                if enemy.vx != 0:
-                    if enemy.vx > 0:
-                        enemy.rect.right = solid.left
-                    else:
-                        enemy.rect.left = solid.right
+                # Horizontal resolution
+                if enemy.vx > 0 and enemy.rect.right > solid.left and old_pos[0] + enemy.rect.width <= solid.left:
+                    enemy.rect.right = solid.left
                     enemy.vx = 0
-                    print(f"[DEBUG] RangedTactical: {enemy.__class__.__name__} horizontal collision")
-                
-                # Vertical collision
-                if enemy.vy > 0:
-                    if enemy.rect.bottom > solid.top and enemy.rect.centery < solid.centery:
-                        enemy.rect.bottom = solid.top
-                        enemy.vy = 0
-                        print(f"[DEBUG] RangedTactical: {enemy.__class__.__name__} ground collision")
-        
-        # Friction
-        enemy.vx *= 0.85
+                elif enemy.vx < 0 and enemy.rect.left < solid.right and old_pos[0] >= solid.right:
+                    enemy.rect.left = solid.right
+                    enemy.vx = 0
+
+                # Vertical resolution
+                if enemy.vy > 0 and enemy.rect.bottom > solid.top and old_pos[1] + enemy.rect.height <= solid.top:
+                    enemy.rect.bottom = solid.top
+                    enemy.vy = 0
+                    enemy.on_ground = True
+                elif enemy.vy < 0 and enemy.rect.top < solid.bottom and old_pos[1] >= solid.bottom:
+                    enemy.rect.top = solid.bottom
+                    enemy.vy = 0
+
+        # Soft friction when grounded
+        if enemy.on_ground:
+            enemy.vx *= 0.8
+            if abs(enemy.vx) < 0.05:
+                enemy.vx = 0
+
+        # Keep inside level horizontal bounds (prevents disappearing off map)
+        level_width_px = getattr(level, "w", 0) * TILE if hasattr(level, "w") else 0
+        if level_width_px > 0:
+            if enemy.rect.left < 0:
+                enemy.rect.left = 0
+                enemy.vx = abs(enemy.vx)
+            elif enemy.rect.right > level_width_px:
+                enemy.rect.right = level_width_px
+                enemy.vx = -abs(enemy.vx)
+
+        # Clamp velocities as final safety
+        enemy.vx = max(-4.0, min(4.0, enemy.vx))
+        enemy.vy = max(-16.0, min(16.0, enemy.vy))
+
+    def _is_gravity_bound(self, enemy) -> bool:
+        """Return True if enemy should obey gravity."""
+        return getattr(enemy, 'gravity_affected', True)
+
+    def _on_solid_ground(self, enemy, level) -> bool:
+        """Check if enemy currently stands on solid ground."""
+        if not level.solids:
+            return False
+        probe = pygame.Rect(enemy.rect.left, enemy.rect.bottom + 1, enemy.rect.width, 2)
+        return any(probe.colliderect(solid) for solid in level.solids)
+    
+    def _has_support_in_direction(self, enemy, level, direction, distance=4) -> bool:
+        """Check if ground exists ahead in the given direction.
+
+        Uses a small probe just beyond the enemy's feet to see if there is a solid.
+        """
+        if not level.solids:
+            return False
+
+        # Look slightly ahead from the bottom center; this avoids overreacting to minor offsets.
+        ahead = enemy.rect.centerx + direction * max(distance, 4)
+        probe = pygame.Rect(ahead - 2, enemy.rect.bottom + 1, 4, 3)
+        return any(probe.colliderect(solid) for solid in level.solids)
+
+    def _set_safe_horizontal_velocity(self, enemy, level, desired_vx):
+        """Apply horizontal velocity with ledge awareness for grounded Archers.
+
+        Fix for:
+        - Jittery 'always dashing' feel
+        - Edge flipping that launches/clips Archer off platforms
+
+        Behavior:
+        - If not gravity-bound -> use desired_vx directly.
+        - If airborne -> use desired_vx directly (no edge anchoring mid-air).
+        - If grounded and stepping off would leave no support -> clamp vx to 0 (stop at edge).
+        - No direction reversal here; we only prevent the unsafe step.
+        """
+        # Tiny velocities are treated as no movement
+        if abs(desired_vx) < 1e-3:
+            enemy.vx = 0
+            return
+
+        # Non-gravity units (floaters etc.) are free to move
+        if not self._is_gravity_bound(enemy):
+            enemy.vx = desired_vx
+            return
+
+        # If not currently on solid ground, don't apply ledge logic (avoid air jitter)
+        if not self._on_solid_ground(enemy, level):
+            enemy.vx = desired_vx
+            return
+
+        direction = 1 if desired_vx > 0 else -1
+
+        # Check if there is still ground in the direction we intend to move.
+        if not self._has_support_in_direction(enemy, level, direction, distance=max(6, enemy.rect.width // 4)):
+            # Stop at edge instead of flipping; this gives proper "anchor" behavior.
+            # Edge detected, blocking move
+            enemy.vx = 0
+        else:
+            enemy.vx = desired_vx
 
 
 class FloatingStrategy(MovementStrategy):
-    """Floating movement for magical enemies - WizardCaster"""
+    """Floating movement for magical enemies - WizardCaster, Bee, etc.
+    
+    Goals:
+    - Smooth, readable hovering.
+    - Respect level bounds so floaters (Bee/Wizard/Assassin variants) do NOT clip OOB.
+    - Minimal interference with each enemy's attack logic.
+    """
     
     def __init__(self):
         super().__init__("floating")
     
     def move(self, enemy, level, player, context: Dict[str, Any]) -> None:
-        """Floating movement with smooth drifts"""
+        """Floating movement with bound-safe drifts."""
+        # Defensive: ensure level dimensions exist
+        level_width_px = getattr(level, "w", 0) * TILE if hasattr(level, "w") else 0
+        
         epos = (enemy.rect.centerx, enemy.rect.centery)
         ppos = (player.rect.centerx, player.rect.centery)
         
-        distance = context.get('distance_to_player', 0)
+        distance = context.get('distance_to_player', 0.0)
         has_los = context.get('has_los', False)
         
-        # Floating enemies hover above ground
+        # Choose a baseline target height; Bees might override via attributes later if needed.
         target_height = self._get_optimal_height(enemy, level)
         current_height = enemy.rect.centery
         
-        # Adjust height
+        # Vertical adjust (slow hover toward target height)
         if abs(current_height - target_height) > 5:
             enemy.vy = 1.0 if current_height < target_height else -1.0
         else:
-            enemy.vy = 0
+            enemy.vy = 0.0
         
-        # Horizontal movement - INCREASED SPEEDS FOR VISIBILITY
-        if has_los and distance < enemy.vision_range:
-            # Maintain distance but face player
+        # Horizontal drift logic (keep modest to avoid tunneling)
+        if has_los and distance < getattr(enemy, "vision_range", 260):
             if distance < 150:
-                # Too close, drift back
+                # Too close, drift away horizontally from player
                 dx = epos[0] - ppos[0]
-                enemy.vx = 2.0 if dx > 0 else -2.0  # Increased from 0.8
-            elif distance > 250:
-                # Too far, drift closer
+                enemy.vx = 1.4 if dx > 0 else -1.4
+            elif distance > 260:
+                # Too far, drift toward player
                 dx = ppos[0] - epos[0]
-                enemy.vx = 1.5 if dx > 0 else -1.5  # Increased from 0.6
+                enemy.vx = 1.0 if dx > 0 else -1.0
             else:
-                # Good distance, slight drift
-                enemy.vx = math.sin(pygame.time.get_ticks() * 0.001) * 1.2  # Increased from 0.5
+                # In a good band, mild oscillation
+                enemy.vx = math.sin(pygame.time.get_ticks() * 0.001) * 0.9
         else:
-            # Gentle floating drift - MORE VISIBLE
-            enemy.vx = math.sin(pygame.time.get_ticks() * 0.0008) * 2.0  # Increased from 0.8
+            # Idle gentle hover
+            enemy.vx = math.sin(pygame.time.get_ticks() * 0.0008) * 1.2
         
-        # Apply movement
+        # Integrate movement
+        old_rect = enemy.rect.copy()
         enemy.rect.x += int(enemy.vx)
         enemy.rect.y += int(enemy.vy)
         
-        # Keep in bounds
-        self._keep_in_bounds(enemy, level)
+        # SOLID COLLISION DETECTION AND RESOLUTION for flying enemies
+        solids = getattr(level, "solids", [])
+        for solid in solids:
+            if enemy.rect.colliderect(solid):
+                # Resolve collision by pushing enemy out of solid
+                # Check horizontal collision first
+                if old_rect.right <= solid.left:
+                    # Moving right, hit left side of solid
+                    enemy.rect.right = solid.left
+                    enemy.vx = -abs(enemy.vx) * 0.5  # Bounce back with damping
+                elif old_rect.left >= solid.right:
+                    # Moving left, hit right side of solid
+                    enemy.rect.left = solid.right
+                    enemy.vx = abs(enemy.vx) * 0.5  # Bounce back with damping
+                
+                # Check vertical collision
+                if old_rect.bottom <= solid.top:
+                    # Moving down, hit top of solid
+                    enemy.rect.bottom = solid.top
+                    enemy.vy = -abs(enemy.vy) * 0.3  # Small bounce up
+                elif old_rect.top >= solid.bottom:
+                    # Moving up, hit bottom of solid
+                    enemy.rect.top = solid.bottom
+                    enemy.vy = abs(enemy.vy) * 0.3  # Small bounce down
+        
+        # Soft clamp to level bounds to prevent clipping / disappearing
+        if level_width_px > 0:
+            if enemy.rect.left < 0:
+                # Floaters clamped to left bound
+                enemy.rect.left = 0
+                enemy.vx = abs(enemy.vx)
+            elif enemy.rect.right > level_width_px:
+                # Floaters clamped to right bound
+                enemy.rect.right = level_width_px
+                enemy.vx = -abs(enemy.vx)
+        
+        # Prevent absurd vertical escape (failsafe; real ceiling/floor from level if needed)
+        if enemy.rect.top < 0:
+            # Floaters clamped to top bound
+            enemy.rect.top = 0
+            enemy.vy = max(0.0, enemy.vy)
+        # Do not clamp bottom hard here; boss rooms / pits may want fall-through for specials.
     
     def _get_optimal_height(self, enemy, level):
-        """Get optimal floating height for enemy"""
-        # Find ground level below enemy
-        ground_y = enemy.rect.bottom
-        
-        for solid in level.solids:
-            if (solid.left <= enemy.rect.centerx <= solid.right and 
-                solid.top > ground_y):
-                ground_y = solid.top
-        
-        # Float 50 pixels above ground
+        """Get optimal floating height: ~50px above nearest ground below, if any."""
+        ground_y = None
+        for solid in getattr(level, "solids", []):
+            if solid.left <= enemy.rect.centerx <= solid.right and solid.top >= enemy.rect.bottom:
+                if ground_y is None or solid.top < ground_y:
+                    ground_y = solid.top
+        if ground_y is None:
+            # No ground below; use current height as baseline to avoid wild jumps.
+            return enemy.rect.centery
         return ground_y - 50
     
     def _keep_in_bounds(self, enemy, level):
-        """Keep enemy within level bounds"""
-        # Simple boundary check
+        """Deprecated helper kept for compatibility (no-op wrapper).
+        
+        Existing callers (if any) still get safe behavior via move() clamps.
+        """
+        level_width_px = getattr(level, "w", 0) * TILE if hasattr(level, "w") else 0
+        if level_width_px <= 0:
+            return
         if enemy.rect.left < 0:
             enemy.rect.left = 0
             enemy.vx = abs(enemy.vx)
-        elif enemy.rect.right > level.w * TILE:
-            enemy.rect.right = level.w * TILE
+        elif enemy.rect.right > level_width_px:
+            enemy.rect.right = level_width_px
             enemy.vx = -abs(enemy.vx)
 
 

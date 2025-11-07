@@ -38,10 +38,9 @@ class Game:
         self.level_index = 0
         self.level = Level(self.level_index)
         
-        # DEBUG: Initialize terrain system
+        # Initialize terrain system
         from terrain_system import terrain_system
         terrain_system.load_terrain_from_level(self.level)
-        print(f"[DEBUG] Terrain system initialized for level {self.level_index}")
         
         sx, sy = self.level.spawn
         # create player with chosen class
@@ -55,10 +54,9 @@ class Game:
         self.level_index = (self.level_index + delta) % ROOM_COUNT
         self.level = Level(self.level_index)
         
-        # DEBUG: Reinitialize terrain system for new level
+        # Reinitialize terrain system for new level
         from terrain_system import terrain_system
         terrain_system.load_terrain_from_level(self.level)
-        print(f"[DEBUG] Terrain system reinitialized for level {self.level_index}")
         
         sx, sy = self.level.spawn
         self.player.rect.topleft = (sx, sy)

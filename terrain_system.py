@@ -115,12 +115,8 @@ class TerrainSystem:
         """Get terrain type at given position"""
         x, y = position
         
-        # DEBUG: Log terrain lookup
-        print(f"[DEBUG] Terrain lookup at ({x}, {y}) - terrain_grid initialized: {self.terrain_grid is not None}")
-        
         # Check if position is within level bounds
         if not (0 <= x < level.w * TILE and 0 <= y < level.h * TILE):
-            print(f"[DEBUG] Position ({x}, {y}) out of bounds, returning NORMAL")
             return TerrainType.NORMAL
         
         # Check terrain grid if available
@@ -132,12 +128,7 @@ class TerrainSystem:
                 0 <= grid_y < len(self.terrain_grid)):
                 terrain_name = self.terrain_grid[grid_y][grid_x]
                 terrain_type = TerrainType(terrain_name)
-                print(f"[DEBUG] Found terrain: {terrain_type} at grid ({grid_x}, {grid_y})")
                 return terrain_type
-            else:
-                print(f"[DEBUG] Grid coordinates ({grid_x}, {grid_y}) out of range")
-        else:
-            print(f"[DEBUG] No terrain grid available, using default NORMAL")
         
         # Default to normal terrain
         return TerrainType.NORMAL
@@ -312,13 +303,11 @@ class TerrainSystem:
         # For now, create a simple default terrain grid
         if hasattr(level, 'terrain_data'):
             self.terrain_grid = level.terrain_data
-            print(f"[DEBUG] Loaded terrain data from level: {len(self.terrain_grid)}x{len(self.terrain_grid[0]) if self.terrain_grid else 0}")
         else:
             # Create default terrain grid
             width = level.w // TILE  # Convert from pixels to tiles
             height = level.h // TILE  # Convert from pixels to tiles
             self.terrain_grid = [['normal' for _ in range(width)] for _ in range(height)]
-            print(f"[DEBUG] Created default terrain grid: {width}x{height}")
     
     def draw_terrain_overlay(self, surface, camera, show_terrain=False):
         """Draw terrain overlay for debugging"""
