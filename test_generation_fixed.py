@@ -174,11 +174,12 @@ def test_critical_fixes_validation():
             if level.spawn_points:
                 spawn_x, spawn_y = level.spawn_points[0]
                 reachable_enemies = 0
-                
+
                 for enemy in enemies:
-                    enemy_tx = enemy.x // TILE
-                    enemy_ty = enemy.y // TILE
-                    
+                    # enemy.x / enemy.y are pixels; convert to tile ints defensively
+                    enemy_tx = int(enemy.x) // TILE
+                    enemy_ty = int(enemy.y) // TILE
+
                     # Check if enemy is on floor and reachable
                     if (0 <= enemy_ty < LEVEL_HEIGHT and 0 <= enemy_tx < LEVEL_WIDTH and
                         grid[enemy_ty][enemy_tx] == 0 and

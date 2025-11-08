@@ -24,7 +24,7 @@ from config import (
     GENERATION_TIME_TARGET,
     TILE,
 )
-from terrain_system import TerrainType
+# terrain_system removed - using hardcoded enemy behaviors
 
 
 def estimate_memory_bytes(grid, terrain_grid):

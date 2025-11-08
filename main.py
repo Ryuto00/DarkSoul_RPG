@@ -23,9 +23,9 @@ from entities import Player, hitboxes, floating, DamageNumber
 from inventory import Inventory
 from menu import Menu
 from shop import Shop
-from level_generator import LevelGenerator, GeneratedLevel
+from level_generator import LevelGenerator, GeneratedLevel, generate_terrain_test_level
 from seed_manager import SeedManager
-from terrain_system import terrain_system
+# terrain_system removed - using hardcoded enemy behaviors
 
 
 
@@ -63,6 +63,11 @@ class Game:
         self.cheat_zero_cooldown = False
         self.debug_enemy_rays = False
         self.debug_enemy_nametags = False
+
+        # Terrain/Area debug
+        self.debug_show_area_overlay = False
+        # Whether we are currently in the dedicated terrain/area test level
+        self.in_terrain_test_level = False
 
         # Seed/debug HUD
         self.show_seed_info = True
@@ -164,6 +169,9 @@ class Game:
                 print(f"[WARN] Procedural generation failed for level {index}: {e}")
                 generated = None
 
+        # Reset test-level flag on normal loads
+        self.in_terrain_test_level = False
+
         if isinstance(generated, GeneratedLevel):
             # Adapt GeneratedLevel instance; attach expected attributes dynamically
             lvl = generated
@@ -186,10 +194,8 @@ class Game:
                 lvl.doors = []
 
             # Initialize / reload terrain system from generated terrain
-            if hasattr(generated, "terrain_grid") and generated.terrain_grid:
-                terrain_system.terrain_grid = generated.terrain_grid
-            else:
-                terrain_system.load_terrain_from_level(lvl)
+            # terrain_system removed - terrain grid handling removed
+            pass
 
             # Ensure enemies list exists
             if not hasattr(lvl, "enemies"):
@@ -206,7 +212,7 @@ class Game:
             self.use_procedural = False
             self.level = Level(index % ROOM_COUNT)
             self.current_level_seed = None
-            terrain_system.load_terrain_from_level(self.level)
+            # terrain_system removed - no terrain loading needed
             self.enemies = self.level.enemies
 
         if not initial:
@@ -385,6 +391,72 @@ class Game:
 
         self.camera.update(self.player.rect)
 
+    def _draw_area_overlay(self):
+        """
+        Debug: draw logical areas and terrain test info on top of current map.
+        Uses self.level.areas if present.
+        """
+        if not getattr(self, "debug_show_area_overlay", False):
+            return
+
+        areas = getattr(self.level, "areas", None)
+        if not areas or not getattr(areas, "areas", None):
+            return
+
+        # Semi-transparent surface
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+
+        # Simple color mapping per area type
+        from area_system import AreaType
+        color_map = {
+            AreaType.PLAYER_SPAWN: (80, 200, 120, 80),
+            AreaType.PORTAL_ZONE: (80, 160, 255, 80),
+            AreaType.GROUND_ENEMY_SPAWN: (255, 120, 80, 80),
+            AreaType.FLYING_ENEMY_SPAWN: (200, 200, 80, 80),
+            AreaType.WATER_AREA: (80, 120, 255, 80),
+            AreaType.MERCHANT_AREA: (255, 200, 120, 80),
+        }
+
+        for area in areas.areas:
+            px = area.x * TILE
+            py = area.y * TILE
+            pw = area.width * TILE
+            ph = area.height * TILE
+            screen_rect = self.camera.to_screen_rect(pygame.Rect(px, py, pw, ph))
+
+            base_col = color_map.get(area.type, (255, 255, 255, 40))
+            pygame.draw.rect(overlay, base_col, screen_rect, border_radius=3)
+            pygame.draw.rect(overlay, (base_col[0], base_col[1], base_col[2], 180), screen_rect, width=1, border_radius=3)
+
+            # Label inside area
+            label = area.type
+            draw_text(overlay, label, (screen_rect.x + 4, screen_rect.y + 2), (255, 255, 255), size=10)
+
+        self.screen.blit(overlay, (0, 0))
+
+    def _get_player_area_labels(self):
+        """
+        Return a comma-separated string of area types under the player's current tile,
+        or empty string if none / unavailable.
+        """
+        areas = getattr(self.level, "areas", None)
+        if not areas or not hasattr(areas, "areas_at"):
+            return ""
+
+        tx = self.player.rect.centerx // TILE
+        ty = self.player.rect.centery // TILE
+        here = areas.areas_at(tx, ty)
+        if not here:
+            return ""
+        # Deduplicate while preserving order
+        seen = set()
+        types = []
+        for a in here:
+            if a.type not in seen:
+                seen.add(a.type)
+                types.append(a.type)
+        return ", ".join(types)
+
     def draw(self):
         self.screen.fill(BG)
         self.level.draw(self.screen, self.camera)
@@ -395,6 +467,9 @@ class Game:
         self.player.draw(self.screen, self.camera)
         for dn in floating:
             dn.draw(self.screen, self.camera, self.font_small)
+
+        # Optional debug overlay for areas
+        self._draw_area_overlay()
 
         # HUD
         x, y = 16, 16
@@ -519,12 +594,23 @@ class Game:
             draw_text(self.screen, "Time Distorted", (WIDTH-180, HEIGHT-220), (150, 150, 255), size=16, bold=True)
 
         draw_text(self.screen,
-                  "Move A/D | Jump Space/K | Dash Shift/J | Attack L/Mouse | Up/Down+Attack for Up/Down slash (Down=Pogo) | Shop F6",
-                  (12, HEIGHT-28), (180,180,200), size=16)
+                   "Move A/D | Jump Space/K | Dash Shift/J | Attack L/Mouse | Up/Down+Attack for Up/Down slash (Down=Pogo) | Shop F6",
+                   (12, HEIGHT-28), (180,180,200), size=16)
         # Money display moved to be under class
         draw_text(self.screen, f"Coins: {self.player.money}", (WIDTH-220, 48), (255, 215, 0), bold=True)
+
+        # God + Area labels
+        hud_x = WIDTH - 64
         if getattr(self.player, 'god', False):
-            draw_text(self.screen, "GOD", (WIDTH-64, 8), (255,200,80), bold=True)
+            draw_text(self.screen, "GOD", (hud_x, 8), (255,200,80), bold=True)
+            hud_x -= 8  # slight shift for area tag
+
+        if self.debug_show_area_overlay:
+            area_label = self._get_player_area_labels()
+            if area_label:
+                draw_text(self.screen, f"AREA: {area_label}", (WIDTH-260, 8), (160, 220, 255), size=12)
+            else:
+                draw_text(self.screen, "AREA: NONE", (WIDTH-260, 8), (120, 160, 200), size=12)
         # Boss room hint: lock door until boss defeated
         if getattr(self.level, 'is_boss_room', False) and any(getattr(e, 'alive', False) for e in self.enemies):
             draw_text(self.screen, "Defeat the boss to open the door", (WIDTH//2 - 160, 8), (255,120,120), size=16)
@@ -612,7 +698,7 @@ class Game:
                                 self.shop.open_shop()
                         continue
                     elif ev.key == pygame.K_F7:
-                        # Add 1000 money
+                        # Add 1000 money (keep original cheat; dedicated test map will be wired separately)
                         self.player.money += 1000
                         floating.append(DamageNumber(
                             self.player.rect.centerx,
@@ -623,16 +709,22 @@ class Game:
                         continue
                     # Teleport / navigation cheats:
                     elif ev.key == pygame.K_F8:
-                        # In procedural mode, go to previous level; legacy: room 1
-                        if self.use_procedural:
-                            self.goto_room(max(0, self.level_index - 1))
-                        else:
-                            self.goto_room(1)
+                        # Load deterministic terrain/area coverage test level
+                        test_level = generate_terrain_test_level()
+                        self.level = test_level
+                        self.enemies = getattr(test_level, "enemies", [])
+                        self.in_terrain_test_level = True
+                        # Spawn player at test spawn
+                        sx, sy = self.level.spawn
+                        self.player.rect.topleft = (sx, sy)
+                        # Clear transient effects
+                        hitboxes.clear()
+                        floating.clear()
+                        continue
                     elif ev.key == pygame.K_F9:
-                        if self.use_procedural:
-                            self.goto_room(self.level_index + 1)
-                        else:
-                            self.goto_room(2)
+                        # Toggle area/terrain overlay visualization
+                        self.debug_show_area_overlay = not self.debug_show_area_overlay
+                        continue
                     elif ev.key == pygame.K_F10:
                         if not self.use_procedural:
                             self.goto_room(3)

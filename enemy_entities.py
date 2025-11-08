@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import random
 import pygame
+from typing import Optional
 
 from config import (
     FPS, GRAVITY, TERMINAL_VY, PLAYER_SPEED, PLAYER_AIR_SPEED, PLAYER_JUMP_V,
@@ -16,7 +17,7 @@ from utils import los_clear, find_intermediate_visible_point, find_idle_patrol_t
 from entity_common import Hitbox, DamageNumber, hitboxes, floating, in_vision_cone
 from player_entity import Player
 from enemy_movement import MovementStrategyFactory
-from terrain_system import terrain_system
+# terrain_system removed - using hardcoded enemy movement behaviors
 
 
 class Enemy:
@@ -186,17 +187,8 @@ class Enemy:
             self._drop_money(player, random.randint(5, 15))
     
     def handle_movement(self, level, player=None, speed_multiplier=1.0):
-        """Handle movement using new movement system."""
-        # Apply terrain effects
-        current_pos = (self.rect.centerx, self.rect.centery)
-        terrain_type = terrain_system.get_terrain_at(current_pos, level)
-        
-        if not terrain_system.apply_terrain_effects(self, terrain_type):
-            # Cannot access this terrain, find alternative
-            self._handle_inaccessible_terrain(level)
-            return
-        
-        # Apply all speed modifiers
+        """Handle movement using enemy-specific hardcoded behaviors."""
+        # Apply all speed modifiers (no terrain effects)
         actual_speed = speed_multiplier * self.speed_multiplier * getattr(self, 'slow_mult', 1.0)
         
         # Use movement strategy if available
@@ -220,7 +212,6 @@ class Enemy:
             'player': player,
             'has_los': getattr(self, '_has_los', False),
             'distance_to_player': distance_to_player,
-            'terrain_type': terrain_system.get_terrain_at((self.rect.centerx, self.rect.centery), level),
             'level': level
         }
         return context
@@ -230,7 +221,7 @@ class Enemy:
         self.vx = 0
         self.vy = 0
         
-        # Try to find alternative path
+        # Try to find alternative path (no terrain system)
         if hasattr(self, 'target') and self.target:
             # Ensure target is a tuple
             if isinstance(self.target, tuple):
@@ -240,9 +231,10 @@ class Enemy:
                 target_pos = (self.target[0] if hasattr(self.target, '__getitem__') else self.target.rect.centerx,
                              self.target[1] if hasattr(self.target, '__getitem__') else self.target.rect.centery)
             
-            alt_path = terrain_system.find_alternative_path(
+            # Simple pathfinding without terrain system
+            alt_path = self._find_simple_alternative_path(
                 (self.rect.centerx, self.rect.centery),
-                target_pos, self, level
+                target_pos, level
             )
             if alt_path:
                 self.target = alt_path[0] if alt_path else None
@@ -258,6 +250,77 @@ class Enemy:
                 else:
                     self.rect.left = s.right
                 self.vx *= -1  # Bounce off walls
+    
+    def _find_simple_alternative_path(self, start_pos: tuple, goal_pos, level) -> Optional[list]:
+        """Simple alternative pathfinding without terrain system"""
+        # Simple implementation - try to find path around obstacles
+        # Convert goal_pos to tuple if it's not already
+        if hasattr(goal_pos, 'rect'):
+            # It's an enemy or player object
+            goal_tuple = (goal_pos.rect.centerx, goal_pos.rect.centery)
+        elif isinstance(goal_pos, (list, tuple)) and len(goal_pos) >= 2:
+            # It's already a coordinate
+            goal_tuple = (int(goal_pos[0]), int(goal_pos[1]))
+        else:
+            # Fallback
+            goal_tuple = start_pos
+        
+        # Try direct path first
+        if self._is_path_clear(start_pos, goal_tuple, level):
+            return [goal_tuple]
+        
+        # Simple waypoint-based pathfinding
+        current = start_pos
+        path = []
+        
+        # Try going around from perpendicular directions
+        dx = goal_tuple[0] - current[0]
+        dy = goal_tuple[1] - current[1]
+        
+        if abs(dx) > abs(dy):
+            # Try going up or down first
+            for offset in [-100, 100]:
+                waypoint = (current[0], current[1] + offset)
+                if self._is_valid_waypoint(waypoint, level):
+                    path.append(waypoint)
+                    break
+        else:
+            # Try going left or right first
+            for offset in [-100, 100]:
+                waypoint = (current[0] + offset, current[1])
+                if self._is_valid_waypoint(waypoint, level):
+                    path.append(waypoint)
+                    break
+        
+        path.append(goal_tuple)
+        return path if len(path) > 1 else None
+    
+    def _is_path_clear(self, start: tuple, end: tuple, level) -> bool:
+        """Check if path is clear for enemy"""
+        steps = 20
+        for i in range(steps + 1):
+            t = i / steps
+            x = start[0] + (end[0] - start[0]) * t
+            y = start[1] + (end[1] - start[1]) * t
+            
+            # Check collision with solids
+            temp_rect = pygame.Rect(int(x) - self.rect.width//2, int(y) - self.rect.height//2,
+                                  self.rect.width, self.rect.height)
+            for s in level.solids:
+                if temp_rect.colliderect(s):
+                    return False
+        
+        return True
+    
+    def _is_valid_waypoint(self, position: tuple, level) -> bool:
+        """Check if waypoint is valid for enemy"""
+        # Simple validation - no collision with solids
+        temp_rect = pygame.Rect(position[0] - self.rect.width//2, position[1] - self.rect.height//2,
+                              self.rect.width, self.rect.height)
+        for s in level.solids:
+            if temp_rect.colliderect(s):
+                return False
+        return True
     
     def handle_gravity(self, level, gravity_multiplier=2.0):
         """Apply gravity and handle ground collision."""
@@ -368,6 +431,10 @@ class Bug(Enemy):
         self.facing_angle = 0 if self.facing > 0 else math.pi
         self.base_speed = 1.8
         self.can_jump = False
+        # Expose attributes expected by validation/tests.
+        self.type = "Bug"
+        self.x = float(self.rect.centerx)
+        self.y = float(self.rect.bottom)
     
     def _get_terrain_traits(self):
         """Bug can navigate through narrow spaces"""
@@ -500,6 +567,10 @@ class Boss(Enemy):
         if self.ifr > 0:
             self.ifr -= 1
 
+        # Sync exposed position attributes
+        self.x = float(self.rect.centerx)
+        self.y = float(self.rect.bottom)
+
         # Handle player collision with boss-specific damage
         if self.rect.colliderect(player.rect):
             # if player parries, reflect to boss
@@ -559,6 +630,8 @@ class Frog(Enemy):
                         vision_range=220, cone_half_angle=math.pi/12, turn_rate=0.08)
         # Frog-specific properties
         self.state = 'idle'
+        # Expose attributes expected by validation/tests.
+        self.type = "Frog"
         self.tele_t = 0
         self.tele_text = ''
         self.cool = 0
@@ -643,6 +716,10 @@ class Frog(Enemy):
         
         # Handle player collision
         self.handle_player_collision(player, damage=1, knockback=(2, -6))
+
+        # Sync exposed position attributes
+        self.x = float(self.rect.centerx)
+        self.y = float(self.rect.bottom)
     
     def _drop_money(self, player, amount):
         """Drop money when enemy dies"""
@@ -682,6 +759,8 @@ class Archer(Enemy):
                         vision_range=350, cone_half_angle=math.pi/4, turn_rate=0.05)
         # Archer-specific properties
         self.cool = 0
+        # Expose attributes expected by validation/tests.
+        self.type = "Archer"
         self.tele_t = 0
         self.tele_text = ''
         self.base_speed = 1.2
@@ -738,6 +817,10 @@ class Archer(Enemy):
         self.handle_movement(level, player)
         self.handle_gravity(level)
 
+        # Sync exposed position attributes
+        self.x = float(self.rect.centerx)
+        self.y = float(self.rect.bottom)
+
     # hit method is inherited from Enemy base class
 
     def draw(self, surf, camera, show_los=False, show_nametags=False):
@@ -766,6 +849,8 @@ class WizardCaster(Enemy):
                         vision_range=280, cone_half_angle=math.pi/3, turn_rate=0.05)
         # Wizard-specific properties
         self.cool = 0
+        # Expose attributes expected by validation/tests.
+        self.type = "WizardCaster"
         self.tele_t = 0
         self.tele_text = ''
         self.action = None  # 'bolt' | 'missile' | 'fireball'
@@ -834,6 +919,10 @@ class WizardCaster(Enemy):
         self.handle_movement(level, player)
         clamp_enemy_to_level(self, level, respect_solids=True)  # FIXED: Now respects solid collisions
 
+        # Sync exposed position attributes (floating enemy: use center)
+        self.x = float(self.rect.centerx)
+        self.y = float(self.rect.centery)
+
     # hit method is inherited from Enemy base class
 
     def draw(self, surf, camera, show_los=False, show_nametags=False):
@@ -862,6 +951,8 @@ class Assassin(Enemy):
                         vision_range=240, cone_half_angle=math.pi/4, turn_rate=0.06)  # Wider vision cone (45 degrees)
         # Assassin-specific properties
         self.state = 'idle'
+        # Expose attributes expected by validation/tests.
+        self.type = "Assassin"
         self.tele_t = 0
         self.cool = 0
         self.action = None  # 'dash' or 'slash'
@@ -1064,6 +1155,10 @@ class Assassin(Enemy):
          
         # Melee damage is applied via explicit sword hitboxes during actions
 
+        # Sync exposed position attributes
+        self.x = float(self.rect.centerx)
+        self.y = float(self.rect.bottom)
+
     # hit method is inherited from Enemy base class
 
     def draw(self, surf, camera, show_los=False, show_nametags=False):
@@ -1092,6 +1187,8 @@ class Bee(Enemy):
                         vision_range=240, cone_half_angle=math.pi/4, turn_rate=0.05)
         # Bee-specific properties
         self.cool = 0
+        # Expose attributes expected by validation/tests.
+        self.type = "Bee"
         self.tele_t = 0
         self.tele_text = ''
         self.action = None
@@ -1149,6 +1246,10 @@ class Bee(Enemy):
         self.handle_movement(level, player)
         clamp_enemy_to_level(self, level, respect_solids=True)  # FIXED: Now respects solid collisions
 
+        # Sync exposed position attributes (floating enemy)
+        self.x = float(self.rect.centerx)
+        self.y = float(self.rect.centery)
+
     def hit(self, hb: Hitbox, player: Player):
         if (self.ifr>0 and not getattr(hb,'bypass_ifr',False)) or not self.alive: return
         self.hp -= hb.damage
@@ -1201,6 +1302,8 @@ class Golem(Enemy):
                         vision_range=500, cone_half_angle=math.pi/3, turn_rate=0.03)
         # Golem-specific properties
         self.cool = 0
+        # Expose attributes expected by validation/tests.
+        self.type = "Golem"
         self.tele_t = 0
         self.tele_text = ''
         self.action = None
@@ -1282,6 +1385,10 @@ class Golem(Enemy):
                 if self.rect.bottom > s.top and self.rect.centery < s.centery:
                     self.rect.bottom = s.top
                     self.vy = 0
+
+        # Sync exposed position attributes
+        self.x = float(self.rect.centerx)
+        self.y = float(self.rect.bottom)
 
         if self.rect.colliderect(player.rect) and player.inv==0:
             player.damage(2, ((1 if player.rect.centerx>self.rect.centerx else -1)*3, -8))

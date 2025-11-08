@@ -10,7 +10,8 @@ from config import TILE
 from seed_manager import SeedManager
 from generation_algorithms import HybridGenerator
 from level_validator import LevelValidator
-from terrain_system import TerrainType, terrain_system
+from terrain_system import TerrainTypeRegistry, init_defaults as init_terrain_defaults
+from area_system import AreaMap, AreaType, AreaRegistry, build_default_areas, init_defaults as init_area_defaults
 
 # Procedural enemy spawn tuning constants (used only in GeneratedLevel._spawn_enemies)
 BUG_WIDTH = 28
@@ -38,12 +39,22 @@ class GeneratedLevel:
     """
     
     def __init__(self, grid: List[List[int]], rooms: List, spawn_points: List[Tuple[int, int]],
-                 level_type: str, terrain_grid: Optional[List[List[str]]] = None):
+                 level_type: str,
+                 terrain_grid: Optional[List[List[str]]] = None,
+                 areas: Optional[AreaMap] = None):
+        """
+        terrain_grid:
+            2D list of terrain_id strings. If None, a trivial mapping is created.
+        areas:
+            AreaMap describing logical areas (spawn zones, portal zone, water, etc.).
+            Optional for backward compatibility.
+        """
         self.grid = grid
         self.rooms = rooms
         self.spawn_points = spawn_points
         self.level_type = level_type
         self.terrain_grid = terrain_grid or self._create_default_terrain(grid)
+        self.areas: AreaMap = areas or AreaMap()
         
         # Core gameplay/physics data expected by the game
         self.solids: List[pygame.Rect] = []
@@ -69,20 +80,39 @@ class GeneratedLevel:
         self._process_level()
     
     def _create_default_terrain(self, grid: List[List[int]]) -> List[List[str]]:
-        """Create default terrain grid from level grid"""
-        terrain_grid = []
+        """
+        Create a default terrain grid from level grid.
+
+        This uses TerrainTypeRegistry defaults:
+        - Walls -> "wall_solid"
+        - Floors -> "floor_normal"
+        """
+        # Ensure defaults are initialized (idempotent).
+        init_terrain_defaults()
+
+        terrain_grid: List[List[str]] = []
         for row in grid:
-            terrain_row = []
+            terrain_row: List[str] = []
             for tile in row:
-                if tile == 1:  # Wall
-                    terrain_row.append(TerrainType.NORMAL.value)
-                else:  # Floor
-                    terrain_row.append(TerrainType.NORMAL.value)
+                if tile == 1:
+                    terrain_row.append("wall_solid")
+                else:
+                    terrain_row.append("floor_normal")
             terrain_grid.append(terrain_row)
         return terrain_grid
     
     def _process_level(self):
-        """Process generated level into game-compatible format."""
+        """Process generated level into game-compatible format.
+
+        Guarantees:
+        - Player spawn:
+            - Only placed on walkable floor tiles (grid == 0).
+            - Prefer tiles inside AreaType.PLAYER_SPAWN areas if provided.
+        - Enemy spawns:
+            - Never inside PLAYER_SPAWN areas or overlapping the player safety zone.
+        """
+        from area_system import AreaType  # local import to avoid cycles
+
         height = len(self.grid)
         width = len(self.grid[0]) if height > 0 else 0
 
@@ -93,17 +123,60 @@ class GeneratedLevel:
                     rect = pygame.Rect(x * TILE, y * TILE, TILE, TILE)
                     self.solids.append(rect)
 
-        # Set spawn point in pixels (must be on floor)
+        # Compute helper: tiles that belong to PLAYER_SPAWN areas (if any)
+        player_spawn_area_tiles = set()
+        if hasattr(self, "areas") and self.areas:
+            try:
+                spawn_areas = self.areas.find_areas_by_type(getattr(AreaType, "PLAYER_SPAWN", "PLAYER_SPAWN"))
+                for a in spawn_areas:
+                    for tx, ty in a.tiles():
+                        if 0 <= tx < width and 0 <= ty < height:
+                            player_spawn_area_tiles.add((tx, ty))
+            except Exception:
+                # Defensive: area issues must not break generation.
+                player_spawn_area_tiles = set()
+
+        # Set spawn point in pixels:
+        # - Prefer first spawn_point that is floor (0).
+        # - If PLAYER_SPAWN areas exist, restrict to tiles within those areas.
+        # - Fallback: any valid floor spawn_point.
         if self.spawn_points:
-            sx, sy = self.spawn_points[0]
+            chosen = None
+
+            # 1) Prefer spawn points that lie inside a PLAYER_SPAWN area (if such areas exist)
+            if player_spawn_area_tiles:
+                for sx, sy in self.spawn_points:
+                    if (
+                        0 <= sy < height
+                        and 0 <= sx < width
+                        and self.grid[sy][sx] == 0
+                        and (sx, sy) in player_spawn_area_tiles
+                    ):
+                        chosen = (sx, sy)
+                        break
+
+            # 2) Otherwise, pick first spawn point on floor.
+            if chosen is None:
+                for sx, sy in self.spawn_points:
+                    if 0 <= sy < height and 0 <= sx < width and self.grid[sy][sx] == 0:
+                        chosen = (sx, sy)
+                        break
+
+            # 3) Fallback to raw first spawn point if still nothing (will be rechecked)
+            if chosen is None:
+                sx, sy = self.spawn_points[0]
+            else:
+                sx, sy = chosen
+
+            # Final safety: only accept if on floor.
             if 0 <= sy < height and 0 <= sx < width and self.grid[sy][sx] == 0:
                 self.spawn = (sx * TILE, sy * TILE)
 
-        # Place portal on a reachable floor tile
+        # Place portal strictly inside a PORTAL_ZONE area if available and reachable.
         self.portal_pos = self._place_portal()
 
-        # Spawn at least one enemy (reachable from player, not on portal)
-        self._spawn_enemies()
+        # Spawn at least one enemy (reachable from player, not on portal, and not in PLAYER_SPAWN areas)
+        self._spawn_enemies(player_spawn_area_tiles=player_spawn_area_tiles)
 
     def _is_reachable(self, start: Tuple[int, int], target: Tuple[int, int]) -> bool:
         """
@@ -145,9 +218,13 @@ class GeneratedLevel:
     def _place_portal(self) -> Optional[Tuple[int, int]]:
         """
         Select a portal position:
-        - On a floor tile inside bounds (not on outer wall ring).
-        - Reachable from player spawn using local BFS.
-        - Prefer tiles far from player to encourage traversal.
+
+        - Prefer tiles inside AreaType.PORTAL_ZONE areas when defined.
+        - Otherwise, fall back to legacy behavior: any interior floor tile.
+        - Must be on a floor tile (grid == 0).
+        - Must be reachable from player spawn via local BFS.
+        - Prefer tiles far from player.
+
         Returns pixel coordinates (x, y) if successful, else None.
         """
         height = len(self.grid)
@@ -155,65 +232,88 @@ class GeneratedLevel:
         if width == 0 or height == 0 or not self.spawn_points:
             return None
 
-        # Player spawn in tile coords derived from authoritative pixel spawn
+        # Player spawn tile from authoritative pixel spawn
         spawn_tile_x = self.spawn[0] // TILE
         spawn_tile_y = self.spawn[1] // TILE
         sx, sy = spawn_tile_x, spawn_tile_y
-        if not (0 <= sx < width and 0 <= sy < height) or self.grid[sy][sx] != 0:
+        if not (0 <= sx < width and 0 <= sy < height):
+            return None
+        if self.grid[sy][sx] != 0:
             return None
 
-        # Collect candidate floor tiles with 1-tile safety margin from border
         candidates: List[Tuple[int, int, int]] = []
-        for y in range(1, height - 1):
-            for x in range(1, width - 1):
-                if self.grid[y][x] == 0:
-                    dist = abs(x - sx) + abs(y - sy)
-                    candidates.append((dist, x, y))
+
+        def is_valid_portal_tile(tx: int, ty: int) -> bool:
+            if not (0 <= tx < width and 0 <= ty < height):
+                return False
+            # Must be floor tile in grid; tests/validator expect this.
+            if self.grid[ty][tx] != 0:
+                return False
+            return True
+
+        # Prefer tiles inside PORTAL_ZONE areas if any exist.
+        portal_zones = self.areas.find_areas_by_type(getattr(AreaType, "PORTAL_ZONE", "PORTAL_ZONE"))
+        if portal_zones:
+            for zone in portal_zones:
+                for tx, ty in zone.tiles():
+                    if is_valid_portal_tile(tx, ty):
+                        dist = abs(tx - sx) + abs(ty - sy)
+                        candidates.append((dist, tx, ty))
+
+        # Fallback: legacy behavior across all interior floor tiles if no zone candidates.
+        if not candidates:
+            for y in range(1, height - 1):
+                for x in range(1, width - 1):
+                    if is_valid_portal_tile(x, y):
+                        dist = abs(x - sx) + abs(y - sy)
+                        candidates.append((dist, x, y))
 
         if not candidates:
             return None
 
-        # Prefer farthest candidates first
+        # Prefer farthest distance first
         candidates.sort(reverse=True)
 
         for _, px, py in candidates:
             if self._is_reachable((sx, sy), (px, py)):
-                # Store as pixel coordinates
                 return (px * TILE, py * TILE)
 
-        # Fallback: no reachable far candidate found
         return None
 
-    def _spawn_enemies(self) -> None:
+    def _spawn_enemies(self, player_spawn_area_tiles: Optional[set] = None) -> None:
         """
         Populate self.enemies with at least one enemy:
+
+        Constraints:
         - Only on valid floor tiles.
-        - Never on/overlapping player spawn area or portal tile.
+        - Never on/overlapping player spawn tile.
+        - Never inside PLAYER_SPAWN areas (player-safe zone).
+        - Never overlapping the player safety rect.
+        - Never on portal tile.
         - Must be reachable from player spawn by local BFS.
         - Do not stack enemies on top of each other.
         Keep simple and deterministic; uses a small fixed set of candidates.
         """
-        from enemy_entities import Bug  # lightweight, base enemy; avoids complex logic here
-        from player_entity import Player
+        from enemy_entities import Bug
+
+        if player_spawn_area_tiles is None:
+            player_spawn_area_tiles = set()
 
         height = len(self.grid)
         width = len(self.grid[0]) if height > 0 else 0
         if width == 0 or height == 0 or not self.spawn_points:
             return
 
-        # Player spawn tile derived from authoritative pixel spawn
+        # Player spawn tile (from authoritative pixel spawn)
         spawn_tile_x = self.spawn[0] // TILE
         spawn_tile_y = self.spawn[1] // TILE
         spawn_tile = (spawn_tile_x, spawn_tile_y)
         sx, sy = spawn_tile
 
-        # Derive player spawn rect from GeneratedLevel.spawn and Player size
-        # self.spawn is top-left pixel position for the player
+        # Safety rect around player spawn
         player_spawn_x, player_spawn_y = self.spawn
-        player_width, player_height = 18, 30  # from Player rect in player_entity.Player.__init__
+        player_width, player_height = 18, 30
         player_spawn_rect = pygame.Rect(player_spawn_x, player_spawn_y, player_width, player_height)
-
-        # Inflated safety region around player spawn; used only for spawn rejection checks
         player_safety_rect = player_spawn_rect.inflate(
             PLAYER_SAFETY_PAD_X * 2,
             PLAYER_SAFETY_PAD_Y * 2,
@@ -223,13 +323,12 @@ class GeneratedLevel:
         if self.portal_pos:
             portal_tile = (self.portal_pos[0] // TILE, self.portal_pos[1] // TILE)
 
-        # Gather candidate floor tiles excluding spawn/portal and immediate neighbors of spawn
-        candidates: List[Tuple[int, int, int]] = []  # (dist, x, y)
+        candidates: List[Tuple[int, int, int]] = []
 
         def is_adjacent_to_spawn(tx: int, ty: int) -> bool:
-            # Manhattan distance 1 from spawn tile for safety buffer
             return abs(tx - sx) + abs(ty - sy) == 1
 
+        # Base candidate selection (on-grid, non-wall, respecting spawn/portal/area buffers)
         for y in range(1, height - 1):
             for x in range(1, width - 1):
                 if self.grid[y][x] != 0:
@@ -240,28 +339,31 @@ class GeneratedLevel:
                     continue
                 if portal_tile and (x, y) == portal_tile:
                     continue
+                # Exclude any tile marked as part of PLAYER_SPAWN areas
+                if (x, y) in player_spawn_area_tiles:
+                    continue
                 dist = abs(x - sx) + abs(y - sy)
                 candidates.append((dist, x, y))
 
         if not candidates:
             return
 
-        # Deterministic order: sort by distance (and then x,y implicitly)
+        # Deterministic: closest first
         candidates.sort()
 
         placed_enemy_rects: List[pygame.Rect] = []
         placed = 0
-        max_enemies = max(1, (width * height) // 300)  # simple density-based cap
+        max_enemies = max(1, (width * height) // 300)
 
         for _, ex, ey in candidates:
             if placed >= max_enemies:
                 break
 
-            # Ensure reachable from player
+            # Reachability on grid
             if not self._is_reachable(spawn_tile, (ex, ey)):
                 continue
 
-            # Compute Bug-equivalent rect for this tile BEFORE instantiation using canonical footprint
+            # Build canonical Bug rect
             enemy_width = BUG_WIDTH
             enemy_height = BUG_HEIGHT
             enemy_x = ex * TILE + TILE // 2
@@ -272,15 +374,13 @@ class GeneratedLevel:
                 enemy_width,
                 enemy_height,
             )
-
-            # Padded rect used only for spacing checks between enemies (does not affect physics)
             test_enemy_rect = enemy_rect.inflate(ENEMY_PADDING * 2, 0)
 
-            # Do not spawn overlapping the (inflated) player safety area
+            # Do not overlap player safety zone
             if enemy_rect.colliderect(player_safety_rect):
                 continue
 
-            # Do not stack on existing enemies; use padded rect for enforced personal space
+            # Do not overlap previously placed enemies
             blocked = False
             for r in placed_enemy_rects:
                 if test_enemy_rect.colliderect(r):
@@ -289,13 +389,42 @@ class GeneratedLevel:
             if blocked:
                 continue
 
-            # Passed all checks; create the enemy and record its rect
+            # Spawn enemy
             bug = Bug(enemy_x, ground_y)
+            bug.x = float(bug.rect.centerx)
+            bug.y = float(bug.rect.bottom)
+
             self.enemies.append(bug)
             placed_enemy_rects.append(enemy_rect)
             placed += 1
 
-        # Guarantee at least one enemy if any candidate was viable (enforced by loop when possible).
+        # If for some reason none were placed but candidates existed, place one safe fallback.
+        if not self.enemies and candidates:
+            # Pick the first candidate that still respects area/safety constraints.
+            for _, ex, ey in candidates:
+                if (ex, ey) == spawn_tile:
+                    continue
+                if (ex, ey) in player_spawn_area_tiles:
+                    continue
+                if not self._is_reachable(spawn_tile, (ex, ey)):
+                    continue
+
+                enemy_x = ex * TILE + TILE // 2
+                ground_y = (ey + 1) * TILE
+                enemy_rect = pygame.Rect(
+                    enemy_x - BUG_WIDTH // 2,
+                    ground_y - BUG_HEIGHT,
+                    BUG_WIDTH,
+                    BUG_HEIGHT,
+                )
+                if enemy_rect.colliderect(player_safety_rect):
+                    continue
+
+                bug = Bug(enemy_x, ground_y)
+                bug.x = float(bug.rect.centerx)
+                bug.y = float(bug.rect.bottom)
+                self.enemies.append(bug)
+                break
 
 
     def draw(self, surf, camera):
@@ -368,11 +497,21 @@ class LevelGenerator:
         # Validate and repair if needed
         validated_data = self._validate_and_repair(level_data)
         
-        # Generate terrain
+        # Initialize data-driven registries (idempotent safe).
+        init_terrain_defaults()
+        init_area_defaults()
+
+        # Generate terrain IDs grid
         terrain_grid = self._generate_terrain(validated_data, sub_seeds['terrain'])
-        
+
+        # Build default areas overlay (PLAYER_SPAWN, PORTAL_ZONE, WATER_AREA, etc.)
+        # Pass tile_size for correct portal conversion.
+        level_data_with_meta = dict(validated_data)
+        level_data_with_meta["terrain_grid"] = terrain_grid
+        level_data_with_meta.setdefault("tile_size", TILE)
+        areas = build_default_areas(level_data_with_meta, terrain_grid)
+
         # Ensure enemy spawn metadata from validation is preserved if present.
-        # Validator may attach 'enemy_spawns' for downstream systems.
         enemy_spawns = validated_data.get('enemy_spawns')
 
         # Create final level
@@ -381,13 +520,15 @@ class LevelGenerator:
             validated_data['rooms'],
             validated_data['spawn_points'],
             validated_data['type'],
-            terrain_grid
+            terrain_grid,
+            areas,
         )
 
-        # If validator proposed explicit enemy_spawns structure and game expects it,
-        # keep it attached on the GeneratedLevel for compatibility.
+        # Attach additional metadata for downstream systems.
         if enemy_spawns is not None:
             setattr(generated_level, 'enemy_spawns', enemy_spawns)
+        setattr(generated_level, 'areas', areas)
+        setattr(generated_level, 'terrain_grid', terrain_grid)
         
         # Track performance
         self.generation_time_ms = (time.time() - start_time) * 1000
@@ -421,34 +562,55 @@ class LevelGenerator:
         return level_data
     
     def _validate_and_repair(self, level_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Validate and repair level if needed"""
+        """
+        Validate and repair structural aspects of the level.
+
+        IMPORTANT:
+        - This runs BEFORE GeneratedLevel spawns real enemies/portal.
+        - We therefore validate only structural properties (grid, rooms,
+          boundaries, connectivity, spawn_points).
+        - We DO NOT enforce presence/positions of enemies/portal here to avoid
+          false failures and double-specifying behavior already covered by
+          GeneratedLevel + tests.
+        """
         max_attempts = 3
         current_data = level_data.copy()
-        
-        # Ensure we have all required fields for the validator
-        if 'enemies' not in current_data:
-            current_data['enemies'] = []
-        if 'portal_pos' not in current_data:
-            current_data['portal_pos'] = None
-        
+
+        # Ensure required keys exist for structural checks
+        current_data.setdefault("rooms", [])
+        current_data.setdefault("spawn_points", current_data.get("spawn_points", []))
+        current_data.setdefault("enemy_spawns", [])
+        # Do NOT inject fake enemies/portal_pos; that is handled later.
+
         for attempt in range(max_attempts):
             self.validation_attempts += 1
-            
-            # Validate current data
+
+            # Run validator but ignore issues that are explicitly about
+            # missing enemies/portal, since those are populated post-process.
             result = self.validator.validate(current_data)
-            
+
             if result.is_valid:
                 return current_data
-            
-            # Try to repair issues
+
+            # Filter issues to see if any structural problems remain.
+            structural_issues = []
+            for issue in result.issues:
+                low = issue.lower()
+                if ("no portal position found" in low) or ("no enemies found" in low):
+                    # Defer these to GeneratedLevel/_spawn_enemies/_place_portal.
+                    continue
+                structural_issues.append(issue)
+
+            if not structural_issues:
+                # Only non-structural complaints (like missing portal/enemies); accept.
+                return current_data
+
+            # Attempt repair for structural problems if we have attempts left.
             if attempt < max_attempts - 1:
                 current_data = self.validator.repair_level(current_data, result)
-                # Update portal position from repaired data if it exists
-                if 'portal_pos' in current_data:
-                    level_data['portal_pos'] = current_data['portal_pos']
-        
-        # If all attempts failed, return original data
-        return level_data
+
+        # If still failing, fall back to the best structural data we have.
+        return current_data
     
     def _generate_terrain(self, level_data: Dict[str, Any], terrain_seed: int) -> List[List[str]]:
         """Generate terrain for the level"""
@@ -469,92 +631,92 @@ class LevelGenerator:
                 if tile == 1:  # Wall
                     # Apply terrain variation to walls
                     terrain_type = self._select_wall_terrain(x, y, level_type, terrain_rng)
-                    terrain_row.append(terrain_type.value)
+                    terrain_row.append(terrain_type)
                 else:  # Floor
                     # Apply terrain variation to floors
                     terrain_type = self._select_floor_terrain(x, y, level_type, terrain_rng)
-                    terrain_row.append(terrain_type.value)
+                    terrain_row.append(terrain_type)
             terrain_grid.append(terrain_row)
         
         return terrain_grid
     
-    def _select_wall_terrain(self, x: int, y: int, level_type: str, rng) -> TerrainType:
+    def _select_wall_terrain(self, x: int, y: int, level_type: str, rng):
         """Select terrain type for wall tiles"""
         if level_type == "dungeon":
             # Mix of normal and rough terrain
             if rng.random() < 0.8:
-                return TerrainType.NORMAL
+                return "normal"
             else:
-                return TerrainType.ROUGH
+                return "rough"
         elif level_type == "cave":
             # More rough terrain
             if rng.random() < 0.6:
-                return TerrainType.ROUGH
+                return "rough"
             elif rng.random() < 0.8:
-                return TerrainType.STEEP
+                return "steep"
             else:
-                return TerrainType.NORMAL
+                return "normal"
         elif level_type == "outdoor":
             # More varied terrain
             rand = rng.random()
             if rand < 0.3:
-                return TerrainType.NORMAL
+                return "normal"
             elif rand < 0.5:
-                return TerrainType.ROUGH
+                return "rough"
             elif rand < 0.7:
-                return TerrainType.MUD
+                return "mud"
             elif rand < 0.85:
-                return TerrainType.WATER
+                return "water"
             else:
-                return TerrainType.ICE
+                return "ice"
         else:  # hybrid
             # Mix of all types
             rand = rng.random()
             if rand < 0.5:
-                return TerrainType.NORMAL
+                return "normal"
             elif rand < 0.7:
-                return TerrainType.ROUGH
+                return "rough"
             elif rand < 0.85:
-                return TerrainType.STEEP
+                return "steep"
             else:
-                return TerrainType.DESTRUCTIBLE
+                return "destructible"
     
-    def _select_floor_terrain(self, x: int, y: int, level_type: str, rng) -> TerrainType:
+    def _select_floor_terrain(self, x: int, y: int, level_type: str, rng):
         """Select terrain type for floor tiles"""
         if level_type == "dungeon":
             # Mostly normal with some variation
             if rng.random() < 0.9:
-                return TerrainType.NORMAL
+                return "normal"
             else:
-                return TerrainType.ROUGH
+                return "rough"
         elif level_type == "cave":
             # More rough and steep
             if rng.random() < 0.4:
-                return TerrainType.NORMAL
+                return "normal"
             elif rng.random() < 0.7:
-                return TerrainType.ROUGH
+                return "rough"
             elif rng.random() < 0.9:
-                return TerrainType.STEEP
+                return "steep"
             else:
-                return TerrainType.MUD
+                return "mud"
         elif level_type == "outdoor":
             # Natural terrain
             rand = rng.random()
             if rand < 0.6:
-                return TerrainType.NORMAL
+                return "normal"
             elif rand < 0.8:
-                return TerrainType.ROUGH
+                return "rough"
             else:
-                return TerrainType.MUD
+                return "mud"
         else:  # hybrid
             # Balanced mix
             rand = rng.random()
             if rand < 0.7:
-                return TerrainType.NORMAL
+                return "normal"
             elif rand < 0.85:
-                return TerrainType.ROUGH
+                return "rough"
             else:
-                return TerrainType.STEEP
+                return "steep"
     
     def get_generation_stats(self) -> Dict[str, Any]:
         """Get statistics about last generation"""
@@ -575,19 +737,180 @@ class LevelGenerator:
 
 
 # Integration function for existing game
-def generate_procedural_level(level_index: int, level_type: str = "dungeon", 
+def generate_procedural_level(level_index: int, level_type: str = "dungeon",
                            difficulty: int = 1, seed: Optional[int] = None) -> GeneratedLevel:
     """
     Convenience function for generating levels
-    
+
     Args:
         level_index: Index of level to generate
         level_type: Type of level ("dungeon", "cave", "outdoor", "hybrid")
         difficulty: Difficulty level (1-3)
         seed: Optional seed override
-        
+
     Returns:
         GeneratedLevel instance compatible with existing game
     """
     generator = LevelGenerator()
     return generator.generate_level(level_index, level_type, difficulty, seed)
+
+
+def generate_terrain_test_level() -> GeneratedLevel:
+    """
+    Build a deterministic terrain/area coverage test level.
+
+    Requirements (per test_terrain_level.md):
+    - 40x30 grid, fully sealed by walls.
+    - Includes all terrain IDs:
+      floor_normal, floor_sticky, floor_icy, floor_fire,
+      platform_normal, platform_sticky, platform_icy, platform_fire,
+      wall_solid, water.
+    - Includes ALL area types:
+      PLAYER_SPAWN, PORTAL_ZONE, GROUND_ENEMY_SPAWN,
+      FLYING_ENEMY_SPAWN, WATER_AREA, MERCHANT_AREA.
+    - Must be exposed via generate_terrain_test_level() and used by F8 in Game.
+    """
+    from area_system import Area, AreaMap, AreaType
+    from terrain_system import init_defaults as terrain_init
+
+    # Ensure registries are initialized.
+    terrain_init()
+    init_area_defaults()
+
+    width, height = 40, 30
+
+    # Start with all floor (0).
+    grid: List[List[int]] = [[0 for _ in range(width)] for _ in range(height)]
+
+    # Outer ring walls (1) to fully seal boundaries.
+    for x in range(width):
+        grid[0][x] = 1
+        grid[height - 1][x] = 1
+    for y in range(height):
+        grid[y][0] = 1
+        grid[y][width - 1] = 1
+
+    # Base terrain grid: start as floor_normal everywhere.
+    terrain_grid: List[List[str]] = [["floor_normal" for _ in range(width)] for _ in range(height)]
+
+    # Align terrain walls with grid walls using wall_solid.
+    for x in range(width):
+        terrain_grid[0][x] = "wall_solid"
+        terrain_grid[height - 1][x] = "wall_solid"
+    for y in range(height):
+        terrain_grid[y][0] = "wall_solid"
+        terrain_grid[y][width - 1] = "wall_solid"
+
+    # Bands / patches for floor_* variants.
+    for x in range(2, 10):
+        terrain_grid[3][x] = "floor_sticky"
+    for x in range(2, 10):
+        terrain_grid[5][x] = "floor_icy"
+    for x in range(2, 10):
+        terrain_grid[7][x] = "floor_fire"
+
+    # Patches for platform_* variants (grid stays 0 so they are walkable).
+    for x in range(12, 20):
+        terrain_grid[4][x] = "platform_normal"
+    for x in range(12, 20):
+        terrain_grid[6][x] = "platform_sticky"
+    for x in range(12, 20):
+        terrain_grid[8][x] = "platform_icy"
+    for x in range(12, 20):
+        terrain_grid[10][x] = "platform_fire"
+
+    # Water pool region for WATER and WATER_AREA testing.
+    for y in range(20, 25):
+        for x in range(5, 15):
+            terrain_grid[y][x] = "water"
+
+    # Spawn points: anchor under PLAYER_SPAWN area, on clear floor.
+    spawn_points = [(6, 10)]
+    rooms: List[Any] = []
+
+    # Build AreaMap containing all required area types.
+    areas = AreaMap()
+
+    # PLAYER_SPAWN area: small region around spawn.
+    areas.add_area(Area(
+        id="test_player_spawn",
+        type=AreaType.PLAYER_SPAWN,
+        x=5,
+        y=9,
+        width=3,
+        height=3,
+        attributes={},
+    ))
+
+    # PORTAL_ZONE: safe floor/platform region on the right side.
+    # Sized >= 3x3 to satisfy AreaRegistry constraints.
+    areas.add_area(Area(
+        id="test_portal_zone",
+        type=AreaType.PORTAL_ZONE,
+        x=26,
+        y=10,
+        width=4,
+        height=4,
+        attributes={},
+    ))
+
+    # GROUND_ENEMY_SPAWN: floor band mid-map.
+    areas.add_area(Area(
+        id="test_ground_enemy_spawn",
+        type=AreaType.GROUND_ENEMY_SPAWN,
+        x=8,
+        y=13,
+        width=4,
+        height=3,
+        attributes={},
+    ))
+
+    # FLYING_ENEMY_SPAWN: open-air region (no strict terrain constraints).
+    areas.add_area(Area(
+        id="test_flying_enemy_spawn",
+        type=AreaType.FLYING_ENEMY_SPAWN,
+        x=20,
+        y=5,
+        width=5,
+        height=4,
+        attributes={},
+    ))
+
+    # WATER_AREA: exactly over the water pool.
+    areas.add_area(Area(
+        id="test_water_area",
+        type=AreaType.WATER_AREA,
+        x=5,
+        y=20,
+        width=10,
+        height=5,
+        attributes={},
+    ))
+
+    # MERCHANT_AREA: solid floor/platform patch, no enemies/portal.
+    areas.add_area(Area(
+        id="test_merchant_area",
+        type=AreaType.MERCHANT_AREA,
+        x=26,
+        y=6,
+        width=5,
+        height=3,
+        attributes={},
+    ))
+
+    # Construct deterministic GeneratedLevel.
+    test_level = GeneratedLevel(
+        grid=grid,
+        rooms=rooms,
+        spawn_points=spawn_points,
+        level_type="terrain_test",
+        terrain_grid=terrain_grid,
+        areas=areas,
+    )
+
+    # Ensure metadata is accessible for overlay + tests.
+    setattr(test_level, "areas", areas)
+    setattr(test_level, "terrain_grid", terrain_grid)
+    test_level.is_procedural = True
+
+    return test_level
