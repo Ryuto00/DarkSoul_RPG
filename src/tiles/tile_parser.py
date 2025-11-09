@@ -13,8 +13,8 @@ class TileParser:
             '#': TileType.WALL,
             '~': TileType.SOLID,
             '_': TileType.PLATFORM,  # Underscore for platform
-            'B': TileType.BREAKABLE_WALL,  # Uppercase B for breakable wall
-            'b': TileType.BREAKABLE_FLOOR,  # Lowercase b for breakable floor
+            '@': TileType.BREAKABLE_WALL,  # @ for breakable wall
+            '%': TileType.BREAKABLE_FLOOR,  # % for breakable floor
         }
 
         # Entity markers (not converted to tiles)
@@ -26,6 +26,7 @@ class TileParser:
             'r': 'enemy_ranged',
             'w': 'enemy_wizard',
             'a': 'enemy_armor',
+            'b': 'enemy_bee',
             'G': 'enemy_boss',
         }
 

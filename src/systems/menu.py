@@ -31,12 +31,14 @@ class Menu:
                 elif ev.type == pygame.KEYDOWN:
                     if ev.key == pygame.K_ESCAPE:
                         pygame.quit(); sys.exit()
-                    elif ev.key == pygame.K_UP:
+                    # Navigation: Arrow keys and WASD
+                    elif ev.key in (pygame.K_UP, pygame.K_w):
                         idx = (idx - 1) % len(options)
-                    elif ev.key == pygame.K_DOWN:
+                    elif ev.key in (pygame.K_DOWN, pygame.K_s):
                         idx = (idx + 1) % len(options)
-                    elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                    elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
                         return options[idx]
+                    # Direct hotkeys
                     elif ev.key == pygame.K_1:
                         return options[0]
                     elif ev.key == pygame.K_2:
@@ -90,7 +92,7 @@ class Menu:
                 if ev.type == pygame.QUIT:
                     pygame.quit(); sys.exit()
                 elif ev.type == pygame.KEYDOWN:
-                    if ev.key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_KP_ENTER):
+                    if ev.key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
                         return
 
             self.screen.fill((12, 12, 18))
@@ -117,11 +119,12 @@ class Menu:
                 elif ev.type == pygame.KEYDOWN:
                     if ev.key == pygame.K_ESCAPE:
                         pygame.quit(); sys.exit()
-                    elif ev.key == pygame.K_UP:
+                    # Navigation: Arrow keys and WASD
+                    elif ev.key in (pygame.K_UP, pygame.K_w):
                         idx = (idx - 1) % len(options)
-                    elif ev.key == pygame.K_DOWN:
+                    elif ev.key in (pygame.K_DOWN, pygame.K_s):
                         idx = (idx + 1) % len(options)
-                    elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                    elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
                         choice = options[idx]
                         if choice == "Start Game":
                             return
@@ -131,7 +134,7 @@ class Menu:
                             self.how_to_play_screen()
                         elif choice == "Quit":
                             pygame.quit(); sys.exit()
-                    # Hotkeys
+                    # Hotkeys (unchanged behavior)
                     elif ev.key in (pygame.K_1, pygame.K_s):
                         return
                     elif ev.key in (pygame.K_2, pygame.K_c):
@@ -159,28 +162,96 @@ class Menu:
             pygame.display.flip()
 
     def game_over_screen(self):
-        """Blocking game over / restart menu. Restart keeps the selected class."""
-        font_big = get_font(48, bold=True)
-        font_med = get_font(28)
+        """
+        Blocking game over / restart menu.
+
+        Options:
+          - Restart: restart run via Game.restart_run()
+          - Main Menu: return to title_screen() and start a fresh run (same as pause menu "Main Menu")
+          - Quit: exit the game
+
+        Restart keeps the selected class; Main Menu allows reconfiguring via title screen.
+        """
+        options = ["Restart", "Main Menu", "Quit"]
+        idx = 0
+
         while True:
             self.clock.tick(FPS)
             for ev in pygame.event.get():
                 if ev.type == pygame.QUIT:
                     pygame.quit(); sys.exit()
                 elif ev.type == pygame.KEYDOWN:
-                    if ev.key in (pygame.K_ESCAPE, pygame.K_q):
-                        pygame.quit(); sys.exit()
-                    if ev.key in (pygame.K_r, pygame.K_RETURN, pygame.K_KP_ENTER):
-                        # Restart run via centralized logic so procedural vs legacy
-                        # behavior is respected and all restarts go through _load_level.
+                    # Direct hotkeys for convenience (preserve legacy behavior)
+                    if ev.key in (pygame.K_r, pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+                        # Restart run via centralized logic so behavior is consistent.
                         self.game.restart_run()
                         return
+                    elif ev.key in (pygame.K_q, pygame.K_ESCAPE):
+                        pygame.quit(); sys.exit()
+
+                    # Navigate options with Arrow keys and WASD
+                    if ev.key in (pygame.K_UP, pygame.K_w):
+                        idx = (idx - 1) % len(options)
+                    elif ev.key in (pygame.K_DOWN, pygame.K_s):
+                        idx = (idx + 1) % len(options)
+                    elif ev.key in (pygame.K_1,):
+                        # Hotkey: 1 => Restart
+                        self.game.restart_run()
+                        return
+                    elif ev.key in (pygame.K_2, pygame.K_e):
+                        # Hotkey: 2 or E => Main Menu
+                        # Mirror pause_menu "Main Menu" behavior:
+                        # - Go back to title_screen()
+                        # - Then reset to level 0 and recreate player/inventory/camera.
+                        self.title_screen()
+                        self.game.level_index = 0
+                        self.game._load_level(self.game.level_index, initial=True)
+                        sx, sy = self.game.level.spawn
+                        self.game.player = Player(sx, sy, cls=self.game.selected_class)
+                        self.game.enemies = self.game.level.enemies
+                        self.game.inventory._refresh_inventory_defaults()
+                        hitboxes.clear()
+                        floating.clear()
+                        self.game.camera = Camera()
+                        return
+                    elif ev.key in (pygame.K_3,):
+                        # Hotkey: 3 => Quit
+                        pygame.quit(); sys.exit()
+                    elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+                        # Handle based on selected menu entry
+                        choice = options[idx]
+                        if choice == "Restart":
+                            self.game.restart_run()
+                            return
+                        elif choice == "Main Menu":
+                            self.title_screen()
+                            self.game.level_index = 0
+                            self.game._load_level(self.game.level_index, initial=True)
+                            sx, sy = self.game.level.spawn
+                            self.game.player = Player(sx, sy, cls=self.game.selected_class)
+                            self.game.enemies = self.game.level.enemies
+                            self.game.inventory._refresh_inventory_defaults()
+                            hitboxes.clear()
+                            floating.clear()
+                            self.game.camera = Camera()
+                            return
+                        elif choice == "Quit":
+                            pygame.quit(); sys.exit()
 
             # draw overlay
             self.screen.fill((10, 10, 16))
-            draw_text(self.screen, "YOU DIED", (WIDTH//2 - 120, HEIGHT//2 - 80), (220,80,80), size=48, bold=True)
-            draw_text(self.screen, "Press R or Enter to Restart", (WIDTH//2 - 160, HEIGHT//2 - 8), (200,200,200), size=24)
-            draw_text(self.screen, "Press Q or Esc to Quit", (WIDTH//2 - 140, HEIGHT//2 + 36), (180,180,180), size=20)
+            draw_text(self.screen, "YOU DIED", (WIDTH//2 - 120, HEIGHT//2 - 120), (220,80,80), size=48, bold=True)
+
+            # Render options list
+            for i, opt in enumerate(options):
+                y = HEIGHT//2 - 10 + i * 40
+                col = (255,220,140) if i == idx else (200,200,200)
+                draw_text(self.screen, f"{i+1}. {opt}", (WIDTH//2 - 80, y), col, size=26)
+
+            # Helper/legacy hints
+            draw_text(self.screen, "Use Up/Down, Enter to select", (WIDTH//2 - 170, HEIGHT//2 + 120), (160,160,180), size=18)
+            draw_text(self.screen, "R / Enter - Restart • E / 2 - Main Menu • Q / Esc / 3 - Quit", (WIDTH//2 - 260, HEIGHT//2 + 150), (140,140,160), size=16)
+
             pygame.display.flip()
 
     def pause_menu(self):
@@ -195,11 +266,12 @@ class Menu:
                 elif ev.type == pygame.KEYDOWN:
                     if ev.key in (pygame.K_ESCAPE, pygame.K_r):
                         return  # resume
-                    elif ev.key == pygame.K_UP:
+                    # Navigation: Arrow keys and WASD
+                    elif ev.key in (pygame.K_UP, pygame.K_w):
                         idx = (idx - 1) % len(options)
-                    elif ev.key == pygame.K_DOWN:
+                    elif ev.key in (pygame.K_DOWN, pygame.K_s):
                         idx = (idx + 1) % len(options)
-                    elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                    elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
                         choice = options[idx]
                         if choice == "Resume":
                             return
@@ -248,7 +320,7 @@ class Menu:
                 if ev.type == pygame.QUIT:
                     pygame.quit(); sys.exit()
                 elif ev.type == pygame.KEYDOWN:
-                    if ev.key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_KP_ENTER):
+                    if ev.key in (pygame.K_ESCAPE, pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
                         return
 
             self.screen.fill((10, 10, 14))

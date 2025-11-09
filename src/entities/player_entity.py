@@ -22,8 +22,8 @@ class Player:
     def __init__(self, x, y, cls='Knight'):
         self.rect = pygame.Rect(x, y, 18, 30)
         self.vx = 0
-        # Give slight downward velocity to ensure ground detection on spawn
-        self.vy = 0.1
+        # Start with zero velocity - gravity will handle ground detection
+        self.vy = 0
         self.facing = 1
         self.on_ground = False
         self.was_on_ground = False
@@ -709,6 +709,12 @@ class Player:
         if self.dead:
             return
 
+        # DEBUG: Track upward pull issue
+        frame_debug_count = getattr(self, '_physics_debug_count', 0)
+        if frame_debug_count < 5:  # Log first 5 frames
+            print(f"[PHYSICS DEBUG #{frame_debug_count+1}] Before physics: pos=({self.rect.x}, {self.rect.y}), vx={self.vx}, vy={self.vy}, on_ground={self.on_ground}")
+            self._physics_debug_count = frame_debug_count + 1
+
         # Tick shared mobility cooldown
         if self.mobility_cd > 0:
             self.mobility_cd -= 1
@@ -861,12 +867,24 @@ class Player:
                     # Maintain compatibility by mirroring rect/vx/vy back to player.
                     entity_rect = self.rect.copy()
                     velocity = pygame.math.Vector2(self.vx, self.vy)
+                    
+                    # DEBUG: Log collision state before resolution
+                    if frame_debug_count < 5:
+                        print(f"[COLLISION DEBUG #{frame_debug_count+1}] Before collision: rect={entity_rect}, vel={velocity}")
+                    
                     new_rect, new_velocity, collision_info_list = tile_collision.resolve_collisions(
                         entity_rect,
                         velocity,
                         level.grid,
                         dt,
                     )
+                    
+                    # DEBUG: Log collision results
+                    if frame_debug_count < 5:
+                        print(f"[COLLISION DEBUG #{frame_debug_count+1}] After collision: rect={new_rect}, vel={new_velocity}, collisions={len(collision_info_list)}")
+                        for i, col in enumerate(collision_info_list):
+                            print(f"  Collision {i}: side={col.get('side')}, tile={col.get('tile_type')}")
+                    
                     # Update from resolved values
                     self.rect = new_rect
                     self.vx = float(new_velocity.x)
@@ -889,6 +907,9 @@ class Player:
                         elif side == "right":
                             # Collided on right side of the player against a wall
                             self.on_left_wall = True
+                        elif side == "bottom":
+                            # Ceiling collision (head hit); keep as non-ground, rely on vy=0 from resolver.
+                            self.on_ground = False
 
                     # Reset coyote timer when grounded
                     if self.on_ground:
@@ -917,6 +938,10 @@ class Player:
         # Always set an attribute; use empty list when collisions is None.
         try:
             self.last_tile_collisions = list(collisions) if collisions else []
+            
+            # DEBUG: Log final state
+            if frame_debug_count < 5:
+                print(f"[PHYSICS DEBUG #{frame_debug_count+1}] Final state: pos=({self.rect.x}, {self.rect.y}), vx={self.vx}, vy={self.vy}, on_ground={self.on_ground}")
         except Exception:
             # Never let bad collision info break the game.
             self.last_tile_collisions = []

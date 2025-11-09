@@ -42,7 +42,7 @@ class TileCollision:
         return tiles
 
     def check_tile_collision(self, entity_rect: pygame.Rect, tile_grid: List[List[int]],
-                            velocity: pygame.Vector2 = None) -> List[dict]:
+                            velocity: Optional[pygame.Vector2] = None) -> List[dict]:
         """Check collision with tiles and return collision info."""
         collisions = []
 
@@ -59,8 +59,13 @@ class TileCollision:
             tile_world_x = tile_x * self.tile_size
             tile_world_y = tile_y * self.tile_size
 
-            offset_x, offset_y = tile_data.collision.collision_box_offset
-            collision_width, collision_height = tile_data.collision.collision_box_size
+            if tile_data.collision.collision_box_offset and tile_data.collision.collision_box_size:
+                offset_x, offset_y = tile_data.collision.collision_box_offset
+                collision_width, collision_height = tile_data.collision.collision_box_size
+            else:
+                # Fallback to full tile size
+                offset_x, offset_y = 0, 0
+                collision_width, collision_height = self.tile_size, self.tile_size
 
             tile_rect = pygame.Rect(
                 tile_world_x + offset_x,
@@ -136,6 +141,11 @@ class TileCollision:
                           tile_grid: List[List[int]], delta_time: float) -> Tuple[pygame.Rect, pygame.Vector2, List[dict]]:
         """Resolve all tile collisions for an entity using separating axis method with directional checks."""
         collision_info_list = []
+        
+        # DEBUG: Track collision resolution
+        debug_enabled = False  # Set to True to enable detailed logging
+        if debug_enabled:
+            print(f"[TILE COLLISION DEBUG] Starting collision resolution for rect={entity_rect}, vel={velocity}")
 
         if not tile_grid or len(tile_grid) == 0:
             return entity_rect, velocity, collision_info_list
@@ -151,8 +161,13 @@ class TileCollision:
 
             tile_world_x = tile_x * self.tile_size
             tile_world_y = tile_y * self.tile_size
-            offset_x, offset_y = tile_data.collision.collision_box_offset
-            collision_width, collision_height = tile_data.collision.collision_box_size
+            if tile_data.collision.collision_box_offset and tile_data.collision.collision_box_size:
+                offset_x, offset_y = tile_data.collision.collision_box_offset
+                collision_width, collision_height = tile_data.collision.collision_box_size
+            else:
+                # Fallback to full tile size
+                offset_x, offset_y = 0, 0
+                collision_width, collision_height = self.tile_size, self.tile_size
 
             tile_rect = pygame.Rect(
                 tile_world_x + offset_x,
@@ -165,6 +180,9 @@ class TileCollision:
                 continue
 
             collision_type = tile_data.collision.collision_type
+            
+            if debug_enabled:
+                print(f"[TILE COLLISION DEBUG] Found collision with tile {tile_type}, type={collision_type}")
 
             if collision_type == "full":
                 overlap_left = entity_rect.right - tile_rect.left
@@ -175,6 +193,8 @@ class TileCollision:
                     if velocity.x > 0:
                         entity_rect.right = tile_rect.left
                         velocity.x = 0
+                        if debug_enabled:
+                            print(f"[TILE COLLISION DEBUG] Resolved LEFT collision")
                         collision_info_list.append({
                             "tile_type": tile_type,
                             "side": "left",
@@ -185,6 +205,8 @@ class TileCollision:
                     if velocity.x < 0:
                         entity_rect.left = tile_rect.right
                         velocity.x = 0
+                        if debug_enabled:
+                            print(f"[TILE COLLISION DEBUG] Resolved RIGHT collision")
                         collision_info_list.append({
                             "tile_type": tile_type,
                             "side": "right",
@@ -202,8 +224,13 @@ class TileCollision:
 
             tile_world_x = tile_x * self.tile_size
             tile_world_y = tile_y * self.tile_size
-            offset_x, offset_y = tile_data.collision.collision_box_offset
-            collision_width, collision_height = tile_data.collision.collision_box_size
+            if tile_data.collision.collision_box_offset and tile_data.collision.collision_box_size:
+                offset_x, offset_y = tile_data.collision.collision_box_offset
+                collision_width, collision_height = tile_data.collision.collision_box_size
+            else:
+                # Fallback to full tile size
+                offset_x, offset_y = 0, 0
+                collision_width, collision_height = self.tile_size, self.tile_size
 
             tile_rect = pygame.Rect(
                 tile_world_x + offset_x,
@@ -222,6 +249,8 @@ class TileCollision:
                 if velocity.y > 0:
                     entity_rect.bottom = tile_rect.top
                     velocity.y = 0
+                    if debug_enabled:
+                        print(f"[TILE COLLISION DEBUG] Resolved TOP_ONLY collision (platform)")
                     collision_info_list.append({
                         "tile_type": tile_type,
                         "side": "top",
@@ -229,30 +258,41 @@ class TileCollision:
                     })
 
             elif collision_type == "full":
-                overlap_top = entity_rect.bottom - tile_rect.top
-                overlap_bottom = tile_rect.bottom - entity_rect.top
+                # Compute overlaps
+                overlap_top = entity_rect.bottom - tile_rect.top      # penetration when coming from above
+                overlap_bottom = tile_rect.bottom - entity_rect.top   # penetration when coming from below
 
-                if overlap_top < overlap_bottom:
-                    # Hit top side of tile (floor): only if moving DOWN
-                    if velocity.y > 0:
-                        entity_rect.bottom = tile_rect.top
-                        velocity.y = 0
-                        collision_info_list.append({
-                            "tile_type": tile_type,
-                            "side": "top",
-                            "tile_data": tile_data,
-                        })
-                else:
-                    # Hit bottom side of tile (ceiling): only if moving UP
-                    if velocity.y < 0:
-                        entity_rect.top = tile_rect.bottom
-                        velocity.y = 0
-                        collision_info_list.append({
-                            "tile_type": tile_type,
-                            "side": "bottom",
-                            "tile_data": tile_data,
-                        })
+                # Skip if no vertical penetration
+                if overlap_top <= 0 and overlap_bottom <= 0:
+                    continue
 
+                # Handle floor (standing ON tile): only when moving downward
+                if overlap_top > 0 and overlap_top <= overlap_bottom and velocity.y > 0:
+                    entity_rect.bottom = tile_rect.top
+                    velocity.y = 0
+                    if debug_enabled:
+                        print(f"[TILE COLLISION DEBUG] Resolved FULL TOP collision (floor)")
+                    collision_info_list.append({
+                        "tile_type": tile_type,
+                        "side": "top",
+                        "tile_data": tile_data,
+                    })
+
+                # Handle ceiling (hitting tile from below): only when moving upward
+                elif overlap_bottom > 0 and overlap_bottom < overlap_top and velocity.y < 0:
+                    entity_rect.top = tile_rect.bottom
+                    velocity.y = 0
+                    if debug_enabled:
+                        print(f"[TILE COLLISION DEBUG] Resolved FULL BOTTOM collision (ceiling)")
+                    collision_info_list.append({
+                        "tile_type": tile_type,
+                        "side": "bottom",
+                        "tile_data": tile_data,
+                    })
+
+        if debug_enabled:
+            print(f"[TILE COLLISION DEBUG] Final result: rect={entity_rect}, vel={velocity}, collisions={len(collision_info_list)}")
+        
         return entity_rect, velocity, collision_info_list
 
     def can_stand_on(self, tile_type: TileType) -> bool:

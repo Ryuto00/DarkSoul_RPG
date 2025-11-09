@@ -52,6 +52,7 @@ class Game:
         # Debug visualization toggles
         self.debug_tile_inspector = False
         self.debug_collision_boxes = False
+        # Collision log overlay is now toggled via F9; default OFF
         self.debug_collision_log = False
         self.collision_events = []  # recent collision events for logger
 
@@ -82,7 +83,37 @@ class Game:
 
         # create player with chosen class
         sx, sy = self.level.spawn
+        print(f"[SPAWN DEBUG] Spawning player at ({sx}, {sy})")
+        
+        # Debug: Log spawn tile information
+        if hasattr(self.level, 'grid') and self.level.grid:
+            spawn_grid_x = sx // 24  # TILE size
+            spawn_grid_y = sy // 24
+            print(f"[SPAWN DEBUG] Spawn grid position: ({spawn_grid_x}, {spawn_grid_y})")
+            print(f"[SPAWN DEBUG] Grid dimensions: {len(self.level.grid)}x{len(self.level.grid[0]) if self.level.grid else 0}")
+            
+            if (0 <= spawn_grid_y < len(self.level.grid) and
+                0 <= spawn_grid_x < len(self.level.grid[0])):
+                spawn_tile = self.level.grid[spawn_grid_y][spawn_grid_x]
+                print(f"[SPAWN DEBUG] Spawn tile at ({spawn_grid_x}, {spawn_grid_y}) = {spawn_tile} (0=air, 1=floor, 2=wall)")
+                # If spawning at top of grid, that explains the issue!
+                if spawn_grid_y <= 1:
+                    print(f"[SPAWN CRITICAL] Spawning at TOP of level! This explains why player gets pulled to ceiling.")
+                    # Find a safe position lower in the level
+                    for new_y in range(2, min(10, len(self.level.grid))):
+                        for new_x in range(max(0, spawn_grid_x-2), min(len(self.level.grid[0]), spawn_grid_x+3)):
+                            if self.level.grid[new_y][new_x] == 1:  # floor tile
+                                sx = new_x * 24 + 12  # center on tile
+                                sy = new_y * 24 - 15  # on top of floor
+                                print(f"[SPAWN DEBUG] Found safe spawn at ({sx}, {sy})")
+                                break
+                        else:
+                            continue
+                        break
+        
         self.player = Player(sx, sy, cls=self.selected_class)
+        print(f"[SPAWN DEBUG] Player rect after init: {self.player.rect}")
+        print(f"[SPAWN DEBUG] Player velocity after init: vx={self.player.vx}, vy={self.player.vy}")
         self.enemies = self.level.enemies
 
         # Inventory & shop
@@ -1054,6 +1085,18 @@ class Game:
         # Optional grid position overlay
         self._draw_grid_position_overlay()
 
+        # Optional tile inspector overlay (F8)
+        if self.debug_tile_inspector:
+            self._draw_tile_inspector()
+
+        # Optional collision boxes overlay
+        if self.debug_collision_boxes:
+            self._draw_collision_boxes()
+
+        # Optional collision log overlay
+        if self.debug_collision_log:
+            self._draw_collision_log_overlay()
+
         # HUD
         x, y = 16, 16
         for i in range(self.player.max_hp):
@@ -1223,6 +1266,10 @@ class Game:
                     # Handle shop input first when shop is open
                     if self.shop.shop_open:
                         self.shop.handle_event(ev)
+                        continue
+                    # Toggle collision report debugger (overlay + capture) with F9
+                    if ev.key == pygame.K_F9:
+                        self.debug_collision_log = not self.debug_collision_log
                         continue
                     if ev.key == pygame.K_i:
                         if not self.shop.shop_open:
@@ -1459,11 +1506,11 @@ class Game:
                 elif ev.type == pygame.KEYDOWN:
                     if ev.key in (pygame.K_ESCAPE, pygame.K_F5):
                         return
-                    elif ev.key == pygame.K_UP:
+                    elif ev.key in (pygame.K_UP, pygame.K_w):
                         idx = (idx - 1) % len(options)
-                    elif ev.key == pygame.K_DOWN:
+                    elif ev.key in (pygame.K_DOWN, pygame.K_s):
                         idx = (idx + 1) % len(options)
-                    elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                    elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
                         opt = options[idx]
                         if opt['type'] == 'toggle':
                             opt['setter'](not opt['getter']())
@@ -1493,11 +1540,11 @@ class Game:
                 elif ev.type == pygame.KEYDOWN:
                     if ev.key in (pygame.K_ESCAPE, pygame.K_F5):
                         return
-                    elif ev.key == pygame.K_LEFT:
+                    elif ev.key in (pygame.K_LEFT, pygame.K_a):
                         idx = (idx - 1) % ROOM_COUNT
-                    elif ev.key == pygame.K_RIGHT:
+                    elif ev.key in (pygame.K_RIGHT, pygame.K_d):
                         idx = (idx + 1) % ROOM_COUNT
-                    elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                    elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
                         self.goto_room(idx)
                         return
             self.draw()
