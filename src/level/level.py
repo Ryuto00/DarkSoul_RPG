@@ -151,7 +151,8 @@ class Level:
         self.solids = []
         self.enemies = []
         self.doors = []
-        self.spawn = (TILE * 2, TILE * 2)
+        # Default spawn position - offset by player height to place feet on tile
+        self.spawn = (TILE * 2, TILE * 2 - 30)
 
         # Initialize new tile system components
         self.tile_parser = TileParser()
@@ -175,6 +176,9 @@ class Level:
         # This is the authoritative TileCollision used by moving entities.
         self.tile_collision = TileCollision(TILE)
 
+        # Validate spawn position to ensure player doesn't spawn inside walls
+        self.spawn = self._validate_spawn_position(self.spawn)
+
     def _load_entities(self, entity_positions):
         """Load enemies and special objects from parsed positions."""
         # Check if boss is present
@@ -184,7 +188,9 @@ class Level:
         # Load spawn point
         if 'spawn' in entity_positions:
             for x, y in entity_positions['spawn']:
-                self.spawn = (x * TILE, y * TILE)
+                # Position player's feet at the spawn point, accounting for player height
+                # Player height is 30px, so we offset by player height to place feet on tile
+                self.spawn = (x * TILE, y * TILE - 30)
 
         # Load enemies
         for entity_type, positions in entity_positions.items():
@@ -226,6 +232,44 @@ class Level:
                     if tile_data and tile_data.collision.collision_type == "full":
                         rect = pygame.Rect(x * TILE, y * TILE, TILE, TILE)
                         self.solids.append(rect)
+
+    def _validate_spawn_position(self, spawn_pos):
+        """Validate and adjust spawn position to prevent spawning inside walls."""
+        x, y = spawn_pos
+        player_rect = pygame.Rect(x, y, 18, 30)  # Player dimensions: 18x30
+
+        # Check if spawn position is inside a solid tile
+        tiles_in_rect = self.tile_collision.get_tiles_in_rect(player_rect, self.grid)
+
+        for tile_type, tile_x, tile_y in tiles_in_rect:
+            tile_data = self.tile_registry.get_tile(tile_type)
+            if tile_data and tile_data.collision.collision_type == "full":
+                # Spawn position is inside a solid tile, find a better position
+                # Try to spawn below this tile
+                new_y = (tile_y + 1) * TILE - 30  # Place player's feet on the tile below
+                return (x, new_y)
+
+        # Also check if there's a solid tile directly below the player's feet
+        feet_y = y + 30
+        tile_below = self.tile_collision.get_tile_at_pos(x + 9, feet_y + 1, self.grid)  # Center of player's feet
+        if tile_below:
+            tile_data = self.tile_registry.get_tile(tile_below)
+            if tile_data and tile_data.collision.collision_type != "none":
+                # Player is on solid ground, this spawn is valid
+                return (x, y)
+
+        # If no solid ground below, try to find the nearest solid ground below
+        for check_y in range(int(feet_y), self.h, TILE):
+            tile_at_y = self.tile_collision.get_tile_at_pos(x + 9, check_y, self.grid)
+            if tile_at_y:
+                tile_data = self.tile_registry.get_tile(tile_at_y)
+                if tile_data and tile_data.collision.collision_type != "none":
+                    # Found solid ground, adjust spawn position
+                    new_y = check_y - 30
+                    return (x, new_y)
+
+        # If no solid ground found, return original position
+        return (x, y)
 
     def get_tile_at(self, x: int, y: int) -> int:
         """Get tile value at grid position."""

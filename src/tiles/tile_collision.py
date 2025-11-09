@@ -134,15 +134,15 @@ class TileCollision:
 
     def resolve_collisions(self, entity_rect: pygame.Rect, velocity: pygame.Vector2,
                           tile_grid: List[List[int]], delta_time: float) -> Tuple[pygame.Rect, pygame.Vector2, List[dict]]:
-        """Resolve all tile collisions for an entity using separating axis method."""
+        """Resolve all tile collisions for an entity using separating axis method with directional checks."""
         collision_info_list = []
-        
+
         if not tile_grid or len(tile_grid) == 0:
             return entity_rect, velocity, collision_info_list
 
         # Horizontal pass (X-axis) - apply velocity and resolve
         entity_rect.x += int(velocity.x)
-        
+
         tiles = self.get_tiles_in_rect(entity_rect, tile_grid)
         for tile_type, tile_x, tile_y in tiles:
             tile_data = tile_registry.get_tile(tile_type)
@@ -167,34 +167,33 @@ class TileCollision:
             collision_type = tile_data.collision.collision_type
 
             if collision_type == "full":
-                # Determine collision side on X-axis
                 overlap_left = entity_rect.right - tile_rect.left
                 overlap_right = tile_rect.right - entity_rect.left
 
                 if overlap_left < overlap_right:
-                    # Hit left side of tile
-                    entity_rect.right = tile_rect.left
+                    # Hit left side of tile: only if moving RIGHT into it
                     if velocity.x > 0:
+                        entity_rect.right = tile_rect.left
                         velocity.x = 0
-                    collision_info_list.append({
-                        "tile_type": tile_type,
-                        "side": "left",
-                        "tile_data": tile_data,
-                    })
+                        collision_info_list.append({
+                            "tile_type": tile_type,
+                            "side": "left",
+                            "tile_data": tile_data,
+                        })
                 else:
-                    # Hit right side of tile
-                    entity_rect.left = tile_rect.right
+                    # Hit right side of tile: only if moving LEFT into it
                     if velocity.x < 0:
+                        entity_rect.left = tile_rect.right
                         velocity.x = 0
-                    collision_info_list.append({
-                        "tile_type": tile_type,
-                        "side": "right",
-                        "tile_data": tile_data,
-                    })
+                        collision_info_list.append({
+                            "tile_type": tile_type,
+                            "side": "right",
+                            "tile_data": tile_data,
+                        })
 
         # Vertical pass (Y-axis) - apply velocity and resolve
         entity_rect.y += int(velocity.y)
-        
+
         tiles = self.get_tiles_in_rect(entity_rect, tile_grid)
         for tile_type, tile_x, tile_y in tiles:
             tile_data = tile_registry.get_tile(tile_type)
@@ -219,7 +218,7 @@ class TileCollision:
             collision_type = tile_data.collision.collision_type
 
             if collision_type == "top_only":
-                # Platform collision: only collide from top
+                # One-way platform: only from above while falling
                 if velocity.y > 0:
                     entity_rect.bottom = tile_rect.top
                     velocity.y = 0
@@ -230,30 +229,29 @@ class TileCollision:
                     })
 
             elif collision_type == "full":
-                # Determine collision side on Y-axis
                 overlap_top = entity_rect.bottom - tile_rect.top
                 overlap_bottom = tile_rect.bottom - entity_rect.top
 
                 if overlap_top < overlap_bottom:
-                    # Hit top side of tile
-                    entity_rect.bottom = tile_rect.top
+                    # Hit top side of tile (floor): only if moving DOWN
                     if velocity.y > 0:
+                        entity_rect.bottom = tile_rect.top
                         velocity.y = 0
-                    collision_info_list.append({
-                        "tile_type": tile_type,
-                        "side": "top",
-                        "tile_data": tile_data,
-                    })
+                        collision_info_list.append({
+                            "tile_type": tile_type,
+                            "side": "top",
+                            "tile_data": tile_data,
+                        })
                 else:
-                    # Hit bottom side of tile
-                    entity_rect.top = tile_rect.bottom
+                    # Hit bottom side of tile (ceiling): only if moving UP
                     if velocity.y < 0:
+                        entity_rect.top = tile_rect.bottom
                         velocity.y = 0
-                    collision_info_list.append({
-                        "tile_type": tile_type,
-                        "side": "bottom",
-                        "tile_data": tile_data,
-                    })
+                        collision_info_list.append({
+                            "tile_type": tile_type,
+                            "side": "bottom",
+                            "tile_data": tile_data,
+                        })
 
         return entity_rect, velocity, collision_info_list
 

@@ -22,7 +22,8 @@ class Player:
     def __init__(self, x, y, cls='Knight'):
         self.rect = pygame.Rect(x, y, 18, 30)
         self.vx = 0
-        self.vy = 0
+        # Give slight downward velocity to ensure ground detection on spawn
+        self.vy = 0.1
         self.facing = 1
         self.on_ground = False
         self.was_on_ground = False
@@ -282,6 +283,17 @@ class Player:
         if just_exited_floating:
             self.vx = 0
             self.vy = 0
+
+        # === FLOATING MODE VERTICAL MOVEMENT ===
+        # Handle vertical input for floating mode in no-clip before physics() early-return.
+        if getattr(self, 'floating_mode', False) and getattr(self, 'no_clip', False):
+            if self.stunned <= 0:
+                if keys[pygame.K_w]:
+                    self.vy = -8
+                elif keys[pygame.K_s]:
+                    self.vy = 8
+                else:
+                    self.vy = 0
 
         # Horizontal movement with momentum-preserving air control
         if not self.dashing:
@@ -701,6 +713,23 @@ class Player:
         if self.mobility_cd > 0:
             self.mobility_cd -= 1
 
+        # CRITICAL: In floating_mode, bypass all tile/solid collisions and move directly.
+        # This must run BEFORE the tile_collision system so floating/no-clip can freely pass through tiles.
+        if getattr(self, 'floating_mode', False):
+            self.rect.x += int(self.vx)
+            self.rect.y += int(self.vy)
+            # In floating mode, always treat as airborne with no ground/wall constraints.
+            self.was_on_ground = False
+            self.on_ground = False
+            self.on_left_wall = False
+            self.on_right_wall = False
+            # Ensure debug/telemetry users see no tile collisions while floating.
+            try:
+                self.last_tile_collisions = []
+            except Exception:
+                pass
+            return
+
         if self.on_ground:
             self.coyote = COYOTE_FRAMES
             self.double_jumps = DOUBLE_JUMPS + int(getattr(self, 'extra_jump_charges', 0))
@@ -822,6 +851,76 @@ class Player:
             if self.dashing == 0 and not self.on_ground:
                 self.vy = GRAVITY
 
+        # Apply collision detection AFTER physics has been applied (skip in no-clip mode)
+        collisions = None
+        if not getattr(self, 'no_clip', False):
+            tile_collision = getattr(level, "tile_collision", None)
+            if tile_collision is not None and getattr(level, "grid", None) is not None:
+                try:
+                    # Use TileCollision to resolve against tile grid.
+                    # Maintain compatibility by mirroring rect/vx/vy back to player.
+                    entity_rect = self.rect.copy()
+                    velocity = pygame.math.Vector2(self.vx, self.vy)
+                    new_rect, new_velocity, collision_info_list = tile_collision.resolve_collisions(
+                        entity_rect,
+                        velocity,
+                        level.grid,
+                        dt,
+                    )
+                    # Update from resolved values
+                    self.rect = new_rect
+                    self.vx = float(new_velocity.x)
+                    self.vy = float(new_velocity.y)
+
+                    # Derive grounded / wall state from collisions
+                    self.was_on_ground = self.on_ground
+                    self.on_ground = False
+                    self.on_left_wall = False
+                    self.on_right_wall = False
+
+                    for c in collision_info_list:
+                        side = c.get("side")
+                        if side == "top":
+                            # Landed on a solid surface
+                            self.on_ground = True
+                        elif side == "left":
+                            # Collided on left side of the player against a wall
+                            self.on_right_wall = True
+                        elif side == "right":
+                            # Collided on right side of the player against a wall
+                            self.on_left_wall = True
+
+                    # Reset coyote timer when grounded
+                    if self.on_ground:
+                        self.coyote = COYOTE_FRAMES
+
+                    collisions = collision_info_list
+                except Exception as e:
+                    # Log error for debugging but continue with simplified physics
+                    print(f"Tile collision error: {e}")
+                    # Simple fallback: just update position with basic gravity
+                    self.rect.x += int(self.vx)
+                    self.rect.y += int(self.vy)
+                    self.was_on_ground = self.on_ground
+                    # Simple ground detection - check if player would fall further
+                    self.on_ground = False
+                    collisions = []
+            else:
+                # If no tile collision system, use simple physics
+                self.rect.x += int(self.vx)
+                self.rect.y += int(self.vy)
+                self.was_on_ground = self.on_ground
+                self.on_ground = False
+                collisions = []
+
+        # Expose last tile collisions for debug/telemetry systems (e.g., Game collision logger)
+        # Always set an attribute; use empty list when collisions is None.
+        try:
+            self.last_tile_collisions = list(collisions) if collisions else []
+        except Exception:
+            # Never let bad collision info break the game.
+            self.last_tile_collisions = []
+
         speed_bonus = self.speed_potion_bonus if self.speed_potion_timer > 0 else 0.0
         cd_step = 1.0 + speed_bonus
         if self.dash_cd > 0:
@@ -905,65 +1004,6 @@ class Player:
             self.hp = max(1, self.max_hp // 2)
             self.phoenix_feather_active = False
             floating.append(DamageNumber(self.rect.centerx, self.rect.top - 12, "PHOENIX REVIVE!", (255, 150, 50)))
-
-        # Prefer new tile-based collision system when available on the level.
-        collisions = None
-        tile_collision = getattr(level, "tile_collision", None)
-        if tile_collision is not None and getattr(level, "grid", None) is not None:
-            try:
-                # Use TileCollision to resolve against tile grid.
-                # Maintain compatibility by mirroring rect/vx/vy back to player.
-                entity_rect = self.rect.copy()
-                velocity = pygame.math.Vector2(self.vx, self.vy)
-                new_rect, new_velocity, collision_info_list = tile_collision.resolve_collisions(
-                    entity_rect,
-                    velocity,
-                    level.grid,
-                    dt,
-                )
-                # Update from resolved values
-                self.rect = new_rect
-                self.vx = float(new_velocity.x)
-                self.vy = float(new_velocity.y)
-
-                # Derive grounded / wall state from collisions
-                self.was_on_ground = self.on_ground
-                self.on_ground = False
-                self.on_left_wall = False
-                self.on_right_wall = False
-
-                for c in collision_info_list:
-                    side = c.get("side")
-                    if side == "top":
-                        # Landed on a solid surface
-                        self.on_ground = True
-                    elif side == "left":
-                        # Collided on left side of the player against a wall
-                        self.on_right_wall = True
-                    elif side == "right":
-                        # Collided on right side of the player against a wall
-                        self.on_left_wall = True
-
-                # Reset coyote timer when grounded
-                if self.on_ground:
-                    self.coyote = COYOTE_FRAMES
-
-                collisions = collision_info_list
-            except Exception:
-                # Fail-safe: if anything goes wrong, fall back to legacy solids-based movement.
-                collisions = None
-                self.move_and_collide(level)
-        else:
-            # Legacy behavior when no tile collision system is present.
-            self.move_and_collide(level)
-
-        # Expose last tile collisions for debug/telemetry systems (e.g., Game collision logger)
-        # Always set an attribute; use empty list when collisions is None.
-        try:
-            self.last_tile_collisions = list(collisions) if collisions else []
-        except Exception:
-            # Never let bad collision info break the game.
-            self.last_tile_collisions = []
 
     def move_and_collide(self, level):
         # Reset wall detection
