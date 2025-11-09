@@ -13,10 +13,10 @@ from config import (
     ATTACK_COOLDOWN, ATTACK_LIFETIME, COMBO_RESET, SWORD_DAMAGE,
     POGO_BOUNCE_VY, ACCENT, GREEN, CYAN, RED, WHITE, IFRAME_BLINK_INTERVAL
 )
-from utils import los_clear, find_intermediate_visible_point, find_idle_patrol_target
-from entity_common import Hitbox, DamageNumber, hitboxes, floating, in_vision_cone
-from player_entity import Player
-from enemy_movement import MovementStrategyFactory
+from ..core.utils import los_clear, find_intermediate_visible_point, find_idle_patrol_target
+from .entity_common import Hitbox, DamageNumber, hitboxes, floating, in_vision_cone
+from .player_entity import Player
+from ..ai.enemy_movement import MovementStrategyFactory
 # terrain_system removed - using hardcoded enemy movement behaviors
 
 
@@ -387,7 +387,7 @@ class Enemy:
     def draw_telegraph(self, surf, camera, text, color=(255, 80, 80)):
         """Draw telegraph text above enemy."""
         if text:
-            from utils import draw_text
+            from src.core.utils import draw_text
             draw_text(surf, text, camera.to_screen((self.rect.centerx-4, self.rect.top-10)), color, size=18, bold=True)
     
     # Methods to be implemented by subclasses
@@ -406,7 +406,7 @@ class Enemy:
     def draw_nametag(self, surf, camera, show_nametags=False):
         """Draw enemy type nametag when debug is enabled."""
         if show_nametags and self.alive:
-            from utils import draw_text
+            from src.core.utils import draw_text
             enemy_type = self.__class__.__name__
             draw_text(surf, enemy_type,
                      camera.to_screen((self.rect.centerx, self.rect.top - 20)),
@@ -744,7 +744,7 @@ class Frog(Enemy):
         
         # Draw telegraph text
         if getattr(self, 'tele_t', 0) > 0 and getattr(self, 'tele_text',''):
-            from utils import draw_text
+            from src.core.utils import draw_text
             rx, ry = self.rect.centerx, self.rect.top - 10
             draw_text(surf, self.tele_text, camera.to_screen((rx-4, ry)), (255,80,80), size=18, bold=True)
         
@@ -835,7 +835,7 @@ class Archer(Enemy):
         
         # Draw telegraph text
         if getattr(self, 'tele_t', 0) > 0 and getattr(self, 'tele_text',''):
-            from utils import draw_text
+            from src.core.utils import draw_text
             draw_text(surf, self.tele_text, camera.to_screen((self.rect.centerx-4, self.rect.top-10)), (255,200,80), size=18, bold=True)
         
         # Draw nametag if enabled
@@ -915,7 +915,7 @@ class WizardCaster(Enemy):
             self.tele_text = '!!'
         
         # Movement: shared floating strategy + global clamp
-        from enemy_movement import clamp_enemy_to_level
+        from ..ai.enemy_movement import clamp_enemy_to_level
         self.handle_movement(level, player)
         clamp_enemy_to_level(self, level, respect_solids=True)  # FIXED: Now respects solid collisions
 
@@ -937,7 +937,7 @@ class WizardCaster(Enemy):
         
         # Draw telegraph text
         if getattr(self, 'tele_t', 0) > 0 and getattr(self, 'tele_text',''):
-            from utils import draw_text
+            from src.core.utils import draw_text
             draw_text(surf, self.tele_text, camera.to_screen((self.rect.centerx-4, self.rect.top-10)), (255,200,80), size=18, bold=True)
         
         # Draw nametag if enabled
@@ -996,7 +996,7 @@ class Assassin(Enemy):
         # Store for drawing
         self._in_cone = in_cone
          
-        from enemy_movement import clamp_enemy_to_level
+        from ..ai.enemy_movement import clamp_enemy_to_level
          
         # Telegraph -> choose dash or slash
         if self.tele_t > 0:
@@ -1242,7 +1242,7 @@ class Bee(Enemy):
             self.tele_text = '!' if self.action == 'dash' else '!!'
         
         # Use new movement system (floating for Bee) + global clamp
-        from enemy_movement import clamp_enemy_to_level
+        from ..ai.enemy_movement import clamp_enemy_to_level
         self.handle_movement(level, player)
         clamp_enemy_to_level(self, level, respect_solids=True)  # FIXED: Now respects solid collisions
 
@@ -1288,7 +1288,7 @@ class Bee(Enemy):
         col = (240, 180, 60) if self.ifr==0 else (140, 120, 50)
         pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=5)
         if getattr(self, 'tele_t', 0) > 0 and getattr(self, 'tele_text',''):
-            from utils import draw_text
+            from src.core.utils import draw_text
             draw_text(surf, self.tele_text, camera.to_screen((self.rect.centerx-4, self.rect.top-10)), (255,100,80), size=18, bold=True)
         
         # Draw nametag if enabled
@@ -1431,7 +1431,7 @@ class Golem(Enemy):
         col = (140, 140, 160) if self.ifr==0 else (100, 100, 120)
         pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=7)
         if getattr(self, 'tele_t', 0) > 0 and getattr(self, 'tele_text',''):
-            from utils import draw_text
+            from src.core.utils import draw_text
             draw_text(surf, self.tele_text, camera.to_screen((self.rect.centerx-6, self.rect.top-12)), (255,120,90), size=22, bold=True)
         
         # Draw nametag if enabled

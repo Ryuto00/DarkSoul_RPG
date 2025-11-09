@@ -8,12 +8,15 @@ from config import (
     DOUBLE_JUMPS,
     ATTACK_COOLDOWN, ATTACK_LIFETIME, COMBO_RESET, SWORD_DAMAGE,
     POGO_BOUNCE_VY, ACCENT, GREEN, CYAN, RED, WHITE, IFRAME_BLINK_INTERVAL,
-    WALL_SLIDE_SPEED, WALL_JUMP_H_SPEED, WALL_JUMP_V_SPEED, WALL_STICK_TIME, WALL_JUMP_COOLDOWN,
-    AIR_ACCEL, AIR_FRICTION, MAX_AIR_SPEED,
-    WALL_JUMP_FLOAT_FRAMES, WALL_JUMP_FLOAT_GRAVITY_SCALE, WALL_JUMP_CONTROL_FRAMES,
-    WALL_JUMP_AIRBORNE_FRAMES, WALL_JUMP_AIRBORNE_COLOR
+    # NEW: Physics-based wall jump parameters
+    WALL_SLIDE_SPEED, WALL_SLIDE_GRAVITY_SCALE, WALL_JUMP_H_ACCEL, WALL_JUMP_H_MAX_SPEED,
+    WALL_JUMP_V_SPEED, WALL_JUMP_GRAVITY_SCALE, WALL_JUMP_COYOTE_TIME, WALL_JUMP_BUFFER_TIME,
+    WALL_JUMP_COOLDOWN, WALL_REATTACH_TIME, WALL_LEAVE_H_BOOST, WALL_CONTROL_MULTIPLIER,
+    WALL_STICK_FRAMES,
+    # Air control parameters
+    AIR_ACCEL, AIR_FRICTION, MAX_AIR_SPEED
 )
-from entity_common import Hitbox, DamageNumber, hitboxes, floating
+from .entity_common import Hitbox, DamageNumber, hitboxes, floating
 
 class Player:
     def __init__(self, x, y, cls='Knight'):
@@ -25,21 +28,16 @@ class Player:
         self.was_on_ground = False
         self.coyote = 0
         self.jump_buffer = 0
-        # Wall jump and slide variables
+        # NEW Wall jump system - cleaner physics-based approach
         self.on_left_wall = False
         self.on_right_wall = False
         self.wall_sliding = False
         self.wall_jump_cooldown = 0
-        self.wall_stick_timer = 0
-        # Wall jump float & control state
-        self.wall_jump_float_timer = 0
-        self.wall_jump_control_timer = 0
-        # Wall jump airborne window state
-        self.wall_jump_airborne_timer = 0
-        self.wall_jump_airborne_active = False
-        self.wall_jump_free_action_used = False
-        # Track if player has touched ground since last wall jump chain
-        self.wall_jump_chain_active = False
+        self.wall_jump_coyote_timer = 0  # Frames after leaving wall you can still jump
+        self.wall_jump_buffer_timer = 0  # Remember jump input when touching wall
+        self.wall_jump_state = None  # None, 'jumping', 'sliding', 'falling'
+        self.wall_jump_direction = 0  # 1 for right, -1 for left
+        self.wall_reattach_timer = 0  # Prevent immediate reattachment
         self.double_jumps = DOUBLE_JUMPS
         self.can_dash = True
         self.dashing = 0
@@ -124,6 +122,12 @@ class Player:
         self._teleport_mana_cost = 20.0
         # dead state
         self.dead = False
+        # no-clip mode (for debugging)
+        self.no_clip = False
+        # floating mode variables
+        self.floating_mode = False
+        self.last_space_time = 0
+        self.space_double_tap_window = 20  # frames for double-tap detection
         # skill cooldown small buffer to avoid spam
         # Per-skill cooldowns (frames) and maxima for HUD
         self.skill_cd1 = 0
@@ -172,6 +176,89 @@ class Player:
         }
         # Money/currency system
         self.money = 0
+
+    def _find_safe_landing_spot(self, level):
+        """Find a safe landing spot when exiting floating mode. Places player on top of nearest platform with at least 2 tiles of headroom."""
+        from config import TILE
+
+        # Get level bounds
+        level_width = getattr(level, 'w', 10000)
+        level_height = getattr(level, 'h', 10000)
+
+        # Search for nearby ground/platform
+        best_spot = None
+        min_distance = float('inf')
+
+        # Check solids (platforms, walls, floors)
+        for solid in level.solids:
+            # Check if there's at least 2 tiles (64 pixels) of space above this solid
+            test_rect = pygame.Rect(solid.left, solid.top - 64, solid.width, 64)
+
+            # Check if this space is free from collisions
+            can_stand_here = True
+            for other_solid in level.solids:
+                if other_solid != solid and test_rect.colliderect(other_solid):
+                    can_stand_here = False
+                    break
+
+            if can_stand_here:
+                # Check if this spot is within level bounds
+                landing_x = self.rect.centerx
+                landing_y = solid.top - self.rect.height
+
+                # Ensure landing position is within bounds
+                if landing_x < 0:
+                    landing_x = self.rect.width // 2
+                elif landing_x > level_width - self.rect.width:
+                    landing_x = level_width - self.rect.width // 2
+
+                if landing_y < 0:
+                    landing_y = 0
+                elif landing_y > level_height - self.rect.height:
+                    landing_y = level_height - self.rect.height
+
+                # Calculate distance from current position
+                distance = abs(landing_x - self.rect.centerx) + abs(landing_y - self.rect.centery)
+
+                # Prefer closer spots
+                if distance < min_distance:
+                    min_distance = distance
+                    best_spot = (landing_x, landing_y)
+
+        # If we found a good spot, move the player there
+        if best_spot:
+            self.rect.centerx = best_spot[0]
+            self.rect.y = best_spot[1]
+            self.vx = 0
+            self.vy = 0
+
+            # Show notification
+            from entity_common import floating, DamageNumber
+            floating.append(DamageNumber(
+                self.rect.centerx,
+                self.rect.top - 12,
+                "Landed!",
+                (100, 255, 100)
+            ))
+        else:
+            # If no safe spot found, try to find any valid position within bounds
+            # Place player at bottom center of level as fallback
+            fallback_x = max(self.rect.width, min(level_width - self.rect.width, level_width // 2))
+            fallback_y = max(0, level_height - self.rect.height - 100)  # 100 pixels from bottom
+
+            self.rect.centerx = fallback_x
+            self.rect.y = fallback_y
+            self.vx = 0
+            self.vy = 0
+
+            # Show notification
+            from entity_common import floating, DamageNumber
+            floating.append(DamageNumber(
+                self.rect.centerx,
+                self.rect.top - 12,
+                "Safe spot created!",
+                (255, 255, 100)
+            ))
     def input(self, level, camera):
         if self.dead:
             return
@@ -186,52 +273,78 @@ class Player:
             if keys[pygame.K_d]:
                 move += 1
 
+        # Track if we just exited floating mode
+        just_exited_floating = getattr(self, '_was_floating_mode', False) and not getattr(self, 'floating_mode', False)
+        # Update floating mode tracking
+        self._was_floating_mode = getattr(self, 'floating_mode', False)
+
+        # Reset momentum when exiting floating mode
+        if just_exited_floating:
+            self.vx = 0
+            self.vy = 0
+
         # Horizontal movement with momentum-preserving air control
         if not self.dashing:
-            base_speed = self.player_speed if self.on_ground else self.player_air_speed
-            bonus = 1.0 if (self.cls == 'Ranger' and getattr(self, 'speed_timer', 0) > 0) else 0.0
-            speed = base_speed + bonus
-
-            if self.on_ground:
-                # Instant, grounded control
-                self.vx = move * speed
-            else:
-                # Airborne: preserve momentum, gently steer toward input
-                # If we're in the special post-wall-jump control window, allow stronger steering.
-                effective_air_accel = AIR_ACCEL
-                if getattr(self, 'wall_jump_control_timer', 0) > 0:
-                    effective_air_accel = AIR_ACCEL * 1.8  # Stronger steering after wall jump
-
-                if move != 0:
-                    target_vx = move * MAX_AIR_SPEED
-                    if self.vx < target_vx:
-                        self.vx = min(self.vx + effective_air_accel, target_vx)
-                    elif self.vx > target_vx:
-                        self.vx = max(self.vx - effective_air_accel, target_vx)
+            # In no-clip mode, use enhanced speed for easier movement
+            if getattr(self, 'no_clip', False):
+                if getattr(self, 'floating_mode', False):
+                    # In floating mode: no momentum, direct control with instant stop
+                    speed = self.player_speed * 2.0  # Even faster in floating mode
+                    self.vx = move * speed
+                    # No momentum - instant stop when no input
+                    if move == 0:
+                        self.vx = 0
                 else:
-                    # No input: apply slight air friction (but don't erase momentum instantly)
-                    self.vx *= AIR_FRICTION
+                    # Normal no-clip mode with some momentum
+                    speed = self.player_speed * 1.5  # 50% faster movement in no-clip
+                    # Direct control for no-clip mode
+                    self.vx = move * speed
+                    # Apply damping when no input for smooth floating
+                    if move == 0:
+                        self.vx *= 0.9
+            else:
+                base_speed = self.player_speed if self.on_ground else self.player_air_speed
+                bonus = 1.0 if (self.cls == 'Ranger' and getattr(self, 'speed_timer', 0) > 0) else 0.0
+                speed = base_speed + bonus
 
-                # Clamp airborne horizontal speed
-                if self.vx > MAX_AIR_SPEED:
-                    self.vx = MAX_AIR_SPEED
-                elif self.vx < -MAX_AIR_SPEED:
-                    self.vx = -MAX_AIR_SPEED
+                if self.on_ground:
+                    # Instant, grounded control
+                    self.vx = move * speed
+                else:
+                    # NEW: Simplified air control with wall jump enhancements
+                    if self.wall_jump_state == 'jumping':
+                        # Enhanced control during wall jump ascent
+                        effective_air_accel = AIR_ACCEL * WALL_CONTROL_MULTIPLIER
+                    else:
+                        effective_air_accel = AIR_ACCEL
+
+                    if move != 0:
+                        target_vx = move * MAX_AIR_SPEED
+                        if self.vx < target_vx:
+                            self.vx = min(self.vx + effective_air_accel, target_vx)
+                        elif self.vx > target_vx:
+                            self.vx = max(self.vx - effective_air_accel, target_vx)
+                    else:
+                        # No input: air friction is handled in _apply_physics()
+                        pass
 
             # Update facing only when there is horizontal input
             if move != 0:
                 self.facing = move
 
-        # Jump input buffering only if mobility cooldown is free
-        if not stunned and self.mobility_cd == 0 and (keys[pygame.K_SPACE] or keys[pygame.K_k]):
-            self.jump_buffer = JUMP_BUFFER_FRAMES
-        else:
-            if self.vy < 0:
-                if not (keys[pygame.K_SPACE] or keys[pygame.K_k]):
-                    self.vy *= PLAYER_SMALL_JUMP_CUT
+      
+        # Jump input buffering - allow jumping when in god mode with floating mode OFF
+        in_no_clip_but_not_floating = getattr(self, 'no_clip', False) and not getattr(self, 'floating_mode', False)
+        if not getattr(self, 'no_clip', False) or in_no_clip_but_not_floating:
+            if not stunned and self.mobility_cd == 0 and (keys[pygame.K_SPACE] or keys[pygame.K_k]):
+                self.jump_buffer = JUMP_BUFFER_FRAMES
+            else:
+                if self.vy < 0:
+                    if not (keys[pygame.K_SPACE] or keys[pygame.K_k]):
+                        self.vy *= PLAYER_SMALL_JUMP_CUT
 
-        # Dash only if mobility cooldown free as well, OR during airborne window with free action
-        free_dash_available = self.wall_jump_airborne_active and not self.wall_jump_free_action_used
+        # NEW: Simplified dash - only if mobility cooldown is free
+        free_dash_available = False
         if (
             not stunned
             and (self.mobility_cd == 0 or free_dash_available)
@@ -313,10 +426,8 @@ class Player:
             # trigger shared mobility cooldown
             self.mobility_cd = MOBILITY_COOLDOWN_FRAMES
         else:
-            # Free dash during airborne window
-            self.wall_jump_free_action_used = True
-            self.wall_jump_airborne_active = False
-            self.wall_jump_airborne_timer = 0
+            # Dash cancels wall jump state
+            self.wall_jump_state = None
         
         # grant short invincibility when dash starts (0.25s)
         self.inv = int(0.25 * FPS)
@@ -594,151 +705,122 @@ class Player:
             self.coyote = COYOTE_FRAMES
             self.double_jumps = DOUBLE_JUMPS + int(getattr(self, 'extra_jump_charges', 0))
             self.can_dash = True if self.dash_cd == 0 else self.can_dash
-            self.wall_stick_timer = 0  # Reset wall stick timer when on ground
-            # Reset wall jump chain when touching ground
-            if self.wall_jump_chain_active:
-                self.wall_jump_chain_active = False
-                self.wall_jump_airborne_active = False
-                self.wall_jump_free_action_used = False
-                self.wall_jump_airborne_timer = 0
+            # Reset wall jump state when touching ground
+            if self.wall_jump_state is not None:
+                self.wall_jump_state = None
+                self.wall_jump_direction = 0
         else:
             self.coyote = max(0, self.coyote-1)
 
         if self.jump_buffer > 0:
             self.jump_buffer -= 1
 
-        # Update wall jump cooldown
+        # NEW: Update wall jump system timers
         if self.wall_jump_cooldown > 0:
             self.wall_jump_cooldown -= 1
 
-        # Update wall stick timer
-        if self.wall_stick_timer > 0:
-            self.wall_stick_timer -= 1
+        if self.wall_jump_coyote_timer > 0:
+            self.wall_jump_coyote_timer -= 1
 
-        # Update wall jump airborne window timer
-        if self.wall_jump_airborne_timer > 0:
-            self.wall_jump_airborne_timer -= 1
-            if self.wall_jump_airborne_timer == 0:
-                self.wall_jump_airborne_active = False
-                self.wall_jump_free_action_used = False
+        if self.wall_jump_buffer_timer > 0:
+            self.wall_jump_buffer_timer -= 1
 
-        # Check if player should stick to wall (just left ground)
-        if self.was_on_ground and not self.on_ground and (self.on_left_wall or self.on_right_wall):
-            if self.wall_jump_cooldown == 0:
-                self.wall_stick_timer = WALL_STICK_TIME
-        # Also allow wall sticking if player is already airborne and touches a wall
-        elif not self.on_ground and not self.was_on_ground and (self.on_left_wall or self.on_right_wall) and self.wall_stick_timer == 0:
-            if self.wall_jump_cooldown == 0:
-                self.wall_stick_timer = WALL_STICK_TIME
+        if self.wall_reattach_timer > 0:
+            self.wall_reattach_timer -= 1
 
-        # Determine if player is wall sliding
+        # NEW: Simplified wall sliding detection
         self.wall_sliding = False
-        if not self.on_ground and self.wall_stick_timer > 0 and (self.on_left_wall or self.on_right_wall):
-            self.wall_sliding = True
-        # If we re-enter wall slide, cancel special wall jump control/float
-        if self.wall_sliding:
-            self.wall_jump_control_timer = 0
-            self.wall_jump_float_timer = 0
+        if not self.on_ground and self.wall_jump_cooldown == 0:
+            if self.on_left_wall or self.on_right_wall:
+                # Start sliding if touching wall
+                self.wall_sliding = True
+                self.wall_jump_coyote_timer = WALL_JUMP_COYOTE_TIME
+                # Reset jump buffer when touching wall
+                if self.jump_buffer > 0 and self.wall_jump_buffer_timer == 0:
+                    self.wall_jump_buffer_timer = WALL_JUMP_BUFFER_TIME
 
         # Only allow resolving buffered jump if mobility cooldown is free
         want_jump = self.jump_buffer > 0 and self.mobility_cd == 0
         jump_mult = getattr(self, 'jump_force_multiplier', 1.0)
         if want_jump:
             did = False
-            # Wall jump takes priority over normal jump when wall sliding
-            if self.wall_sliding:
-                # Check wall jump cooldown before allowing wall jump
-                if self.wall_jump_cooldown > 0:
-                    # Don't allow wall jump, but allow normal jump if possible
-                    if self.double_jumps > 0:
-                        self.vy = PLAYER_JUMP_V * jump_mult
-                        self.double_jumps -= 1
-                        did = True
-                else:
-                    # Softer wall jump away from wall with controllable airborne phase.
-                    # Nudge position slightly off the wall to avoid immediate recollision.
+
+            # NEW: Physics-based wall jump system
+            if self.wall_sliding or self.wall_jump_coyote_timer > 0:
+                # Wall jump with acceleration-based physics
+                if self.wall_jump_cooldown == 0:
+                    # Determine jump direction based on wall
                     if self.on_left_wall:
-                        self.rect.x += 2
-                        self.vx = WALL_JUMP_H_SPEED
+                        self.wall_jump_direction = 1  # Jump right
+                        # Gentle nudge away from wall
+                        self.rect.x += 1
                     elif self.on_right_wall:
-                        self.rect.x -= 2
-                        self.vx = -WALL_JUMP_H_SPEED
+                        self.wall_jump_direction = -1  # Jump left
+                        # Gentle nudge away from wall
+                        self.rect.x -= 1
                     else:
-                        # Fallback: use facing direction if flags are desynced
-                        self.vx = -WALL_JUMP_H_SPEED if self.facing > 0 else WALL_JUMP_H_SPEED
+                        # Use coyote direction if just left wall
+                        self.wall_jump_direction = self.wall_jump_direction if self.wall_jump_direction != 0 else (-1 if self.facing > 0 else 1)
+
+                    # Apply gentle initial horizontal boost
+                    self.vx = WALL_LEAVE_H_BOOST * self.wall_jump_direction
+                    # Set vertical velocity
                     self.vy = WALL_JUMP_V_SPEED * jump_mult
-                    # Start float + control window to make launch feel like a soft, controllable jump
-                    self.wall_jump_float_timer = WALL_JUMP_FLOAT_FRAMES
-                    self.wall_jump_control_timer = WALL_JUMP_CONTROL_FRAMES
-                    # Only start airborne window if not already in a wall jump chain
-                    if not self.wall_jump_chain_active:
-                        # Start airborne window for free action
-                        self.wall_jump_airborne_timer = WALL_JUMP_AIRBORNE_FRAMES
-                        self.wall_jump_airborne_active = True
-                        self.wall_jump_free_action_used = False
-                        self.wall_jump_chain_active = True
-                    # Apply wall jump cooldown to prevent immediate re-sticking
+
+                    # Set state for physics update
+                    self.wall_jump_state = 'jumping'
                     self.wall_jump_cooldown = WALL_JUMP_COOLDOWN
-                    self.wall_stick_timer = 0
+                    self.wall_reattach_timer = WALL_REATTACH_TIME
+                    self.wall_sliding = False
                     self.on_left_wall = False
                     self.on_right_wall = False
-                    # IMPORTANT: Allow double jump after wall jump by NOT consuming double_jumps here
-                    # The double jump should be available after wall jump
+                    did = True
+                elif self.double_jumps > 0:
+                    # Normal double jump if wall jump on cooldown
+                    self.vy = PLAYER_JUMP_V * jump_mult
+                    self.double_jumps -= 1
                     did = True
             elif self.on_ground or self.coyote > 0:
+                # Normal ground jump
                 self.vy = PLAYER_JUMP_V * jump_mult
-                did = True
-            elif self.wall_jump_airborne_active and not self.wall_jump_free_action_used:
-                # Free jump during wall jump airborne window
-                self.vy = PLAYER_JUMP_V * jump_mult
-                self.wall_jump_free_action_used = True
-                self.wall_jump_airborne_active = False
-                self.wall_jump_airborne_timer = 0
                 did = True
             elif self.double_jumps > 0:
+                # Air double jump
                 self.vy = PLAYER_JUMP_V * jump_mult
                 self.double_jumps -= 1
-                # Apply wall jump cooldown to normal double jumps as well
-                self.wall_jump_cooldown = WALL_JUMP_COOLDOWN
                 did = True
+
             if did:
                 self.jump_buffer = 0
                 self.on_ground = False
-                # Any successful jump (ground/double/wall) triggers shared mobility cooldown
+                # Any successful jump triggers shared mobility cooldown
                 self.mobility_cd = MOBILITY_COOLDOWN_FRAMES
 
         # Apply gravity or wall slide physics
-        if not self.dashing:
-            if self.wall_sliding:
-                # Wall slide - reduced fall speed
-                self.vy = min(WALL_SLIDE_SPEED, self.vy + GRAVITY * 0.3)
-                # Cancel float/control if we re-enter slide
-                self.wall_jump_float_timer = 0
-                self.wall_jump_control_timer = 0
+        # NEW: Simplified physics system
+        if getattr(self, 'no_clip', False):
+            keys = pygame.key.get_pressed()
+            if getattr(self, 'floating_mode', False):
+                # Floating mode with direct control
+                if self.stunned <= 0:
+                    if keys[pygame.K_w]:
+                        self.vy = -8
+                    elif keys[pygame.K_s]:
+                        self.vy = 8
+                    else:
+                        self.vy = 0
             else:
-                # If we are in a post-wall-jump float window, apply reduced gravity (soft, upward slow)
-                if self.wall_jump_float_timer > 0 and self.vy <= 0:
-                    self.vy = min(
-                        TERMINAL_VY,
-                        self.vy + GRAVITY * WALL_JUMP_FLOAT_GRAVITY_SCALE
-                    )
-                    self.wall_jump_float_timer -= 1
+                # No-clip mode with physics
+                if not self.dashing:
+                    self._apply_physics()
                 else:
-                    self.vy = min(TERMINAL_VY, self.vy + GRAVITY)
-                    if self.wall_jump_float_timer > 0:
-                        self.wall_jump_float_timer = 0
-
-                # During special wall jump control window, allow stronger steering (handled via vx input)
-                if self.wall_jump_control_timer > 0:
-                    self.wall_jump_control_timer -= 1
+                    self.dashing -= 1
+        elif not self.dashing:
+            self._apply_physics()
         else:
             self.dashing -= 1
             if self.dashing == 0 and not self.on_ground:
-                # Dash just ended and player is airborne, apply initial gravity
                 self.vy = GRAVITY
-                # Cancel any remaining wall jump float/control when dash ends into air
-                self.wall_jump_float_timer = 0
-                self.wall_jump_control_timer = 0
 
         speed_bonus = self.speed_potion_bonus if self.speed_potion_timer > 0 else 0.0
         cd_step = 1.0 + speed_bonus
@@ -832,22 +914,94 @@ class Player:
         prev_right_wall = self.on_right_wall
         self.on_left_wall = False
         self.on_right_wall = False
-        
+
+        # Special handling for no-clip mode
+        if getattr(self, 'no_clip', False):
+            # If floating mode is ON, just move without any collision
+            if getattr(self, 'floating_mode', False):
+                self.rect.x += int(self.vx)
+                self.rect.y += int(self.vy)
+                # In floating mode, always treat as if in air
+                self.on_ground = False
+                self.was_on_ground = False
+                return
+            else:
+                # In normal no-clip mode (floating OFF), move without collision but still detect walls for wall jumps
+                self.rect.x += int(self.vx)
+                self.rect.y += int(self.vy)
+
+                # Reset wall detection
+                prev_left_wall = self.on_left_wall
+                prev_right_wall = self.on_right_wall
+                self.on_left_wall = False
+                self.on_right_wall = False
+
+                # Check for wall proximity even in no-clip mode (for wall jumps)
+                expanded_rect = self.rect.inflate(2, 0)  # Expand horizontally by 1 pixel each side
+                for s in level.solids:
+                    if expanded_rect.colliderect(s):
+                        # Determine which side the wall is on
+                        if self.rect.centerx < s.centerx:  # Wall is to the right
+                            if abs(self.rect.right - s.left) <= 2:  # Within 2 pixels
+                                self.on_right_wall = True
+                        else:  # Wall is to the left
+                            if abs(self.rect.left - s.right) <= 2:  # Within 2 pixels
+                                self.on_left_wall = True
+
+                # Simulate ground detection for jumping purposes
+                # Check if there's ground below the player
+                ground_check = self.rect.copy()
+                ground_check.y += 2
+                self.was_on_ground = self.on_ground
+                self.on_ground = any(ground_check.colliderect(s) for s in level.solids)
+
+                return
+
+        # Check if we just exited no-clip mode
+        if getattr(self, '_was_no_clip', False) and not getattr(self, 'no_clip', False):
+            # Reset horizontal momentum when exiting no-clip to prevent slow movement
+            self.vx = 0
+            # Apply slight downward momentum when exiting no-clip
+            self.vy = max(self.vy, 1)  # Reduced downward momentum for better feel
+
+            # Check if player is stuck in a wall
+            player_stuck = False
+            for s in level.solids:
+                if self.rect.colliderect(s):
+                    player_stuck = True
+                    break
+
+            if player_stuck:
+                # Find nearest safe position
+                safe_pos = self._find_safe_position(level)
+                if safe_pos:
+                    self.rect.x, self.rect.y = safe_pos
+                    # Reset velocity to ensure clean movement
+                    self.vx = 0
+                    self.vy = 1  # Gentle downward momentum
+
+        # Update tracking for no-clip state changes
+        self._was_no_clip = getattr(self, 'no_clip', False)
+
         # Horizontal movement and collision
         self.rect.x += int(self.vx)
         for s in level.solids:
             if self.rect.colliderect(s):
+                # NEW: Prevent wall reattachment if timer is active
+                can_attach = self.wall_reattach_timer == 0
                 if self.vx > 0:
                     self.rect.right = s.left
-                    self.on_right_wall = True
+                    if can_attach:
+                        self.on_right_wall = True
                 elif self.vx < 0:
                     self.rect.left = s.right
-                    self.on_left_wall = True
+                    if can_attach:
+                        self.on_left_wall = True
                 self.vx = 0
 
         # Additional wall check - check if player is touching wall even without horizontal movement
         # This helps maintain wall contact during sliding
-        if not self.on_left_wall and not self.on_right_wall:
+        if not self.on_left_wall and not self.on_right_wall and self.wall_reattach_timer == 0:
             # Check a slightly expanded rect to detect wall proximity
             expanded_rect = self.rect.inflate(2, 0)  # Expand horizontally by 1 pixel each side
             for s in level.solids:
@@ -903,10 +1057,101 @@ class Player:
             floating.append(DamageNumber(self.rect.centerx, self.rect.centery, "KO", CYAN))
 
     def draw(self, surf, camera):
-        # Change color when wall sliding for visual feedback
-        if self.wall_sliding:
+        # Change color for visual feedback
+        if getattr(self, 'no_clip', False):
+            if getattr(self, 'floating_mode', False):
+                # Cyan color for floating mode
+                col = (100, 255, 200) if not self.iframes_flash else (100, 255, 80)
+            else:
+                # Purple/magenta color for regular no-clip mode
+                col = (200, 100, 255) if not self.iframes_flash else (200, 100, 80)
+        elif self.wall_sliding:
             col = (100, 150, 255) if not self.iframes_flash else (100, 150, 80)  # Blue tint when sliding
         else:
             col = ACCENT if not self.iframes_flash else (ACCENT[0], ACCENT[1], 80)
-        
+
         pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=4)
+
+    def _find_safe_position(self, level):
+        """Find the nearest safe position where the player won't be stuck in a wall"""
+        from config import TILE
+
+        # Start searching from current position, expanding outward
+        search_radius = 1
+        max_radius = 10
+
+        while search_radius <= max_radius:
+            # Check positions in a square pattern around the player
+            for dx in range(-search_radius, search_radius + 1):
+                for dy in range(-search_radius, search_radius + 1):
+                    if dx == 0 and dy == 0:
+                        continue
+
+                    test_rect = self.rect.copy()
+                    test_rect.x += dx * TILE // 4
+                    test_rect.y += dy * TILE // 4
+
+                    # Check if this position is safe (not inside any solid)
+                    is_safe = True
+                    for solid in level.solids:
+                        if test_rect.colliderect(solid):
+                            is_safe = False
+                            break
+
+                    if is_safe:
+                        # Also check if we're within level bounds
+                        if hasattr(level, 'w') and hasattr(level, 'h'):
+                            level_w = level.w * TILE if isinstance(level.w, int) else level.w
+                            level_h = level.h * TILE if isinstance(level.h, int) else level.h
+                            if (test_rect.left >= 0 and test_rect.right <= level_w and
+                                test_rect.top >= 0 and test_rect.bottom <= level_h):
+                                return (test_rect.x, test_rect.y)
+                        else:
+                            return (test_rect.x, test_rect.y)
+
+            search_radius += 1
+
+        # If no safe position found, return None
+        return None
+
+    def _apply_physics(self):
+        """NEW: Physics-based wall jump and gravity system"""
+
+        # NEW: Handle wall jump acceleration and state
+        if self.wall_jump_state == 'jumping':
+            # Apply horizontal acceleration away from wall
+            if self.wall_jump_direction != 0:
+                # Accelerate in the jump direction
+                self.vx += WALL_JUMP_H_ACCEL * self.wall_jump_direction
+                # Clamp to maximum horizontal speed
+                self.vx = max(-WALL_JUMP_H_MAX_SPEED, min(WALL_JUMP_H_MAX_SPEED, self.vx))
+
+            # Apply reduced gravity during ascent phase
+            if self.vy < 0:
+                self.vy += GRAVITY * WALL_JUMP_GRAVITY_SCALE
+                # Check if we should transition to falling
+                if self.vy >= 0:
+                    self.wall_jump_state = 'falling'
+            else:
+                self.wall_jump_state = 'falling'
+
+        # Apply wall sliding physics
+        elif self.wall_sliding:
+            # Heavy gravity but with speed cap for controlled descent
+            self.vy = min(WALL_SLIDE_SPEED, self.vy + GRAVITY * WALL_SLIDE_GRAVITY_SCALE)
+            # Reset wall jump state when sliding
+            self.wall_jump_state = None
+
+        # Normal gravity
+        else:
+            self.vy = min(TERMINAL_VY, self.vy + GRAVITY)
+
+        # Apply air friction for better control
+        if not self.on_ground:
+            friction = AIR_FRICTION
+            # Enhanced control during wall jump
+            if self.wall_jump_state in ['jumping', 'falling']:
+                if self.wall_reattach_timer <= 0:
+                    friction *= (1.0 - (WALL_CONTROL_MULTIPLIER - 1.0) * 0.1)  # Slightly better air control
+
+            self.vx *= friction

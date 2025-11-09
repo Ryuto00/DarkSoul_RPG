@@ -1,16 +1,15 @@
 import pygame
-from config import TILE, TILE_COL, CYAN
-from entities import Bug, Boss, Frog, Archer, WizardCaster, Assassin, Bee, Golem
+from config import TILE, TILE_COL, CYAN, TILE_SYMBOLS
+from ..entities.entities import Bug, Boss, Frog, Archer, WizardCaster, Assassin, Bee, Golem
 
-# Rooms (tilemaps). Legend: # solid, . empty, S spawn, E enemy, D door->next room
+# Rooms (tilemaps). Legend: # wall, . floor/empty, S spawn, E enemy, D door->next room
 # Extra enemies: f=Frog, r=Archer, w=WizardCaster, a=Assassin, b=Bee, G=Golem boss
 # NOTE:
-#   These legacy rooms are kept for backward compatibility and as a fallback
-#   when procedural generation is disabled or fails. Procedural levels are
-#   provided via level_generator.GeneratedLevel, which matches the Level API.
+#   Procedural generation has been removed. These static rooms are now the
+#   canonical and only level layouts used by the game.
 ROOMS = [
     # Room 1 (larger)
-    [
+     [
         "########################################",
         "#......................................#",
         "#...............................r..r...#",

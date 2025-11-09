@@ -5,7 +5,7 @@ from typing import Dict, List, Tuple, Any, Optional
 from functools import wraps
 
 from config import FPS, GREEN, CYAN, WHITE, DOUBLE_JUMPS
-from entities import floating, DamageNumber
+from ..entities.entities import floating, DamageNumber
 
 
 Color = Tuple[int, int, int]

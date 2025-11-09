@@ -10,7 +10,7 @@ from abc import ABC, abstractmethod
 from typing import List, Tuple, Optional, Dict, Any
 
 from config import TILE, GRAVITY
-from utils import los_clear
+from ..core.utils import los_clear
 
 
 class MovementStrategy(ABC):

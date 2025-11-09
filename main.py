@@ -9,23 +9,15 @@ from config import (
     WHITE,
     CYAN,
     GREEN,
-    WALL_JUMP_AIRBORNE_COLOR,
-    LEVEL_WIDTH,
-    LEVEL_HEIGHT,
-    LEVEL_TYPE,
-    DIFFICULTY,
-    TILE,
+    WALL_JUMP_COOLDOWN,
 )
-from utils import draw_text, get_font
-from camera import Camera
-from level import Level, ROOM_COUNT
-from entities import Player, hitboxes, floating, DamageNumber
-from inventory import Inventory
-from menu import Menu
-from shop import Shop
-from level_generator import LevelGenerator, GeneratedLevel, generate_terrain_test_level
-from seed_manager import SeedManager
-# terrain_system removed - using hardcoded enemy behaviors
+from src.core.utils import draw_text, get_font
+from src.systems.camera import Camera
+from src.level.level import Level, ROOM_COUNT
+from src.entities.entities import Player, hitboxes, floating, DamageNumber
+from src.systems.inventory import Inventory
+from src.systems.menu import Menu
+from src.systems.shop import Shop
 
 
 
@@ -40,17 +32,9 @@ class Game:
         self.font_big = get_font(32, bold=True)
         self.camera = Camera()
 
-        # Core systems
-        self.seed_manager = SeedManager()
-        self.level_generator = LevelGenerator(width=LEVEL_WIDTH, height=LEVEL_HEIGHT)
-
-        # Runtime generation options (can be overridden by menu)
-        # user_wants_procedural captures player intent; never mutated by error handling.
-        self.user_wants_procedural = True  # default to procedural
-        # use_procedural is kept as a per-load internal flag derived from user_wants_procedural.
-        self.use_procedural = self.user_wants_procedural
-        self.level_type = LEVEL_TYPE
-        self.difficulty = DIFFICULTY
+        # Level configuration: static layout only (procedural disabled)
+        self.level_type = "static"
+        self.difficulty = 1
 
         # Initialize menu system
         self.menu = Menu(self)
@@ -69,18 +53,24 @@ class Game:
         # Whether we are currently in the dedicated terrain/area test level
         self.in_terrain_test_level = False
 
-        # Seed/debug HUD
-        self.show_seed_info = True
+        # Grid position debug
+        self.debug_grid_position = False
+        self.mouse_grid_pos = None
+        self.mouse_world_pos = None
 
-        # Run title; this may configure class, seed, generation options
+
+        # Double spacebar detection for no-clip toggle
+        self.last_space_time = 0
+        self.space_double_tap_window = 20  # frames for double-tap detection
+        self._prev_space_pressed = False
+
+        # Run title; legacy flow may still configure basic options
         self.menu.title_screen()
-
-        # Level state
+        
+        # Level state for static rooms
         self.level_index = 0
-        self.world_seed = self.seed_manager.get_world_seed()
-        self.current_level_seed = None
-
-        # Initialize first level (procedural or legacy fallback)
+        
+        # Initialize first static level
         self._load_level(self.level_index, initial=True)
 
         # create player with chosen class
@@ -93,31 +83,16 @@ class Game:
         self.inventory._refresh_inventory_defaults()
         self.shop = Shop(self)
 
-    # === Level / Generation Management ===
+    # === Level Management (static rooms only) ===
 
     def restart_run(self):
         """
-        Centralized restart logic for starting a fresh run from level 0.
-
-        Behavior:
-        - Resets level_index to 0.
-        - Uses _load_level with initial=True so procedural vs legacy behavior
-          is derived from user_wants_procedural and routed correctly
-          through GeneratedLevel/Level.
-        - Recreates the player at the new level's spawn using selected_class.
-        - Syncs enemies from the loaded level.
-        - Refreshes inventory defaults (if inventory exists).
-        - Clears transient combat/VFX collections.
-        - Resets camera.
-
-        Notes:
-        - Does NOT mutate user_wants_procedural.
-        - Does NOT force use_procedural or manually instantiate Level.
+        Restart from the first static room.
         """
         # Reset to first level index
         self.level_index = 0
 
-        # Load level 0 through the unified loader so it respects procedural intent
+        # Load level 0
         self._load_level(self.level_index, initial=True)
 
         # Recreate player at the new spawn
@@ -140,80 +115,28 @@ class Game:
 
     def _load_level(self, index: int, initial: bool = False):
         """
-        Load a level by index using procedural generation when enabled,
-        with graceful fallback to legacy Level on failure.
+        Load a static level by index using legacy hard-coded rooms.
         """
         self.level_index = index
 
-        generated = None
+        # Use modulo to cycle through available hardcoded rooms
+        room_index = index % ROOM_COUNT
 
-        # Derive internal per-load procedural flag from user intent.
-        use_procedural_for_load = bool(getattr(self, "user_wants_procedural", True))
+        try:
+            lvl = Level(room_index)
+            print(f"[INFO] Loaded hardcoded room {room_index} for level {index}")
+        except Exception as e:
+            print(f"[CRITICAL ERROR] Failed to load hardcoded room {room_index}: {e}")
+            return
 
-        if use_procedural_for_load:
-            try:
-                # Ensure world seed is set/stable
-                if not hasattr(self, "world_seed") or self.world_seed is None:
-                    self.world_seed = self.seed_manager.get_world_seed()
-                else:
-                    self.seed_manager.set_world_seed(self.world_seed)
+        # Ensure core attributes exist
+        if not hasattr(lvl, "doors"):
+            lvl.doors = []
+        if not hasattr(lvl, "enemies"):
+            lvl.enemies = []
 
-                # Generate level and capture stats
-                generated = self.level_generator.generate_level(
-                    level_index=index,
-                    level_type=self.level_type,
-                    difficulty=self.difficulty,
-                    seed=self.world_seed,
-                )
-            except Exception as e:
-                print(f"[WARN] Procedural generation failed for level {index}: {e}")
-                generated = None
-
-        # Reset test-level flag on normal loads
-        self.in_terrain_test_level = False
-
-        if isinstance(generated, GeneratedLevel):
-            # Adapt GeneratedLevel instance; attach expected attributes dynamically
-            lvl = generated
-            # Reflect that this load is procedural (for HUD/debug).
-            self.use_procedural = True
-
-            # Provide width/height in pixels for systems expecting them
-            if generated.grid and len(generated.grid) > 0 and len(generated.grid[0]) > 0:
-                lvl.w = len(generated.grid[0]) * TILE
-                lvl.h = len(generated.grid) * TILE
-            else:
-                lvl.w = LEVEL_WIDTH * TILE
-                lvl.h = LEVEL_HEIGHT * TILE
-
-            # Mark as procedural for debug/cheats
-            lvl.is_procedural = True
-
-            # Ensure doors attribute exists (safety)
-            if not hasattr(lvl, "doors"):
-                lvl.doors = []
-
-            # Initialize / reload terrain system from generated terrain
-            # terrain_system removed - terrain grid handling removed
-            pass
-
-            # Ensure enemies list exists
-            if not hasattr(lvl, "enemies"):
-                lvl.enemies = []
-
-            self.level = lvl
-            self.current_level_seed = self.seed_manager.get_level_seed()
-            self.enemies = lvl.enemies
-
-        else:
-            # Fallback to legacy static Level & ROOMS for THIS load only.
-            # Do not change user_wants_procedural here; that flag is only
-            # modified via menus / explicit user actions.
-            self.use_procedural = False
-            self.level = Level(index % ROOM_COUNT)
-            self.current_level_seed = None
-            # terrain_system removed - no terrain loading needed
-            self.enemies = self.level.enemies
+        self.level = lvl
+        self.enemies = lvl.enemies
 
         if not initial:
             # Clear transient combat visuals when switching rooms
@@ -222,16 +145,9 @@ class Game:
 
     def switch_room(self, delta: int):
         """
-        Move to next/previous room index.
-        Works for both procedural and legacy modes.
+        Move to next/previous static room index (wraps within ROOM_COUNT).
         """
-        # In procedural mode we treat level_index as unbounded sequence.
-        # In legacy fallback we wrap using ROOM_COUNT.
-        if self.use_procedural:
-            new_index = max(0, self.level_index + delta)
-        else:
-            new_index = (self.level_index + delta) % ROOM_COUNT
-
+        new_index = max(0, self.level_index + delta)
         self._load_level(new_index)
 
         # Reposition player at new spawn
@@ -244,15 +160,9 @@ class Game:
 
     def goto_room(self, index: int):
         """
-        Teleport to an absolute room index.
-        - Procedural: uses that index directly (for deterministic seeds).
-        - Legacy: wraps via ROOM_COUNT.
+        Teleport to an absolute static room index (wraps within ROOM_COUNT).
         """
-        if self.use_procedural:
-            target_index = max(0, index)
-        else:
-            target_index = index % ROOM_COUNT
-
+        target_index = max(0, index)
         self._load_level(target_index)
         sx, sy = self.level.spawn
         self.player.rect.topleft = (sx, sy)
@@ -278,6 +188,40 @@ class Game:
             for attr in ('skill_cd1', 'skill_cd2', 'skill_cd3', 'dash_cd', 'mobility_cd'):
                 if hasattr(self.player, attr):
                     setattr(self.player, attr, 0)
+
+        # Handle double-space detection for no-clip + floating toggle (only in god mode)
+        if getattr(self.player, 'god', False):
+            keys = pygame.key.get_pressed()
+            space_pressed = keys[pygame.K_SPACE] or keys[pygame.K_k]
+
+            # Check for double-tap
+            if space_pressed and not self._prev_space_pressed:
+                # Space just pressed
+                if pygame.time.get_ticks() - self.last_space_time < (self.space_double_tap_window * 1000 // FPS):
+                    # Double-tap detected!
+                    currently_active = getattr(self.player, 'no_clip', False)
+                    if currently_active:
+                        # Turn OFF both no-clip and floating
+                        self.player.no_clip = False
+                        self.player.floating_mode = False
+                        floating.append(DamageNumber(
+                            self.player.rect.centerx,
+                            self.player.rect.top - 12,
+                            "No-clip OFF!",
+                            (200, 200, 200)
+                        ))
+                    else:
+                        # Turn ON both no-clip and floating
+                        self.player.no_clip = True
+                        self.player.floating_mode = True
+                        floating.append(DamageNumber(
+                            self.player.rect.centerx,
+                            self.player.rect.top - 12,
+                            "No-clip ON (Floating)!",
+                            (100, 255, 200)
+                        ))
+                self.last_space_time = pygame.time.get_ticks()
+            self._prev_space_pressed = space_pressed
 
         for d in getattr(self.level, "doors", []):
             if self.player.rect.colliderect(d):
@@ -406,8 +350,29 @@ class Game:
         # Semi-transparent surface
         overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
 
+        # Draw grid lines first (very subtle) for levels that expose a grid.
+        # Static Level does not define grid/terrain_grid; only run when attributes exist.
+        level_grid = getattr(self.level, "grid", None)
+        if level_grid:
+            grid_height = len(level_grid)
+            grid_width = len(level_grid[0]) if grid_height > 0 else 0
+
+            # Vertical grid lines
+            for x in range(grid_width + 1):
+                world_x = x * TILE
+                line_rect = pygame.Rect(world_x, 0, 1, grid_height * TILE)
+                screen_rect = self.camera.to_screen_rect(line_rect)
+                pygame.draw.rect(overlay, (100, 100, 100, 30), screen_rect)
+
+            # Horizontal grid lines
+            for y in range(grid_height + 1):
+                world_y = y * TILE
+                line_rect = pygame.Rect(0, world_y, grid_width * TILE, 1)
+                screen_rect = self.camera.to_screen_rect(line_rect)
+                pygame.draw.rect(overlay, (100, 100, 100, 30), screen_rect)
+
         # Simple color mapping per area type
-        from area_system import AreaType
+        from src.level.area_system import AreaType
         color_map = {
             AreaType.PLAYER_SPAWN: (80, 200, 120, 80),
             AreaType.PORTAL_ZONE: (80, 160, 255, 80),
@@ -428,9 +393,15 @@ class Game:
             pygame.draw.rect(overlay, base_col, screen_rect, border_radius=3)
             pygame.draw.rect(overlay, (base_col[0], base_col[1], base_col[2], 180), screen_rect, width=1, border_radius=3)
 
-            # Label inside area
-            label = area.type
+            # Label inside area with coordinates
+            label = f"{area.type} ({area.x},{area.y})"
             draw_text(overlay, label, (screen_rect.x + 4, screen_rect.y + 2), (255, 255, 255), size=10)
+
+            # Draw corner labels for tile coordinates
+            if screen_rect.width > 40 and screen_rect.height > 20:
+                # Top-left corner coordinate
+                coord_label = f"({area.x},{area.y})"
+                draw_text(overlay, coord_label, (screen_rect.x + 2, screen_rect.y + screen_rect.height - 15), (200, 200, 200), size=8)
 
         self.screen.blit(overlay, (0, 0))
 
@@ -457,6 +428,227 @@ class Game:
                 types.append(a.type)
         return ", ".join(types)
 
+    def _get_grid_position(self, mouse_screen_pos):
+        """
+        Convert mouse screen position to grid coordinates.
+        Returns (grid_x, grid_y, world_x, world_y, collision_type, terrain_type, combined_info)
+        """
+        # Convert screen to world coordinates using camera inverse transform
+        world_x = (mouse_screen_pos[0] / self.camera.zoom) + self.camera.x
+        world_y = (mouse_screen_pos[1] / self.camera.zoom) + self.camera.y
+
+        # Convert world to grid coordinates
+        grid_x = int(world_x // TILE)
+        grid_y = int(world_y // TILE)
+
+        # Get tile type if grid exists
+        collision_type = "Unknown"
+        terrain_type = "Unknown"
+        terrain_id = "N/A"
+
+        level_grid = getattr(self.level, "grid", None)
+        if level_grid:
+            if 0 <= grid_y < len(level_grid) and 0 <= grid_x < len(level_grid[0]):
+                # Get collision type from grid (0=air, 1=floor, 2=wall, 3=solid)
+                grid_value = level_grid[grid_y][grid_x]
+                from config import TILE_AIR, TILE_FLOOR, TILE_WALL, TILE_SOLID
+                if grid_value == TILE_AIR:
+                    collision_type = "Air"
+                elif grid_value == TILE_FLOOR:
+                    collision_type = "Floor"
+                elif grid_value == TILE_WALL:
+                    collision_type = "Wall"
+                elif grid_value == TILE_SOLID:
+                    collision_type = "Solid"
+                else:
+                    collision_type = f"Unknown({grid_value})"
+        
+                # Get terrain type if available (procedural/terrain test levels only)
+                terrain_grid = getattr(self.level, "terrain_grid", None)
+                if terrain_grid:
+                    try:
+                        terrain_id = terrain_grid[grid_y][grid_x]
+        
+                        # Simple terrain type mapping based on terrain_id string
+                        if "platform" in terrain_id:
+                            terrain_type = "Platform"
+                        elif "wall" in terrain_id:
+                            terrain_type = "Wall"
+                        elif "floor" in terrain_id:
+                            terrain_type = "Floor"
+                        elif "water" in terrain_id:
+                            terrain_type = "Water"
+                        else:
+                            # Use the terrain_id directly if we can't categorize it
+                            terrain_type = terrain_id
+        
+                    except Exception as e:
+                        # Fallback if terrain system fails
+                        terrain_type = f"Error: {str(e)[:20]}"
+                else:
+                    terrain_type = "No terrain data"
+
+        # Create combined info string showing both types
+        if collision_type != "Unknown" and terrain_type != "Unknown":
+            combined_info = f"Collision: {collision_type} | Terrain: {terrain_type}"
+        elif collision_type != "Unknown":
+            combined_info = f"Collision: {collision_type}"
+        else:
+            combined_info = "Out of bounds"
+
+        return grid_x, grid_y, int(world_x), int(world_y), collision_type, terrain_type, combined_info, terrain_id
+
+    def _draw_grid_position_overlay(self):
+        """
+        Draw grid position information at mouse cursor when debug_grid_position is enabled.
+        Only works when god mode is active.
+        """
+        if not self.debug_grid_position:
+            return
+
+        # Only work in god mode
+        if not getattr(self.player, 'god', False):
+            return
+
+        # Get current mouse position
+        mouse_screen_pos = pygame.mouse.get_pos()
+
+        # Calculate grid position
+        grid_x, grid_y, world_x, world_y, collision_type, terrain_type, combined_info, terrain_id = self._get_grid_position(mouse_screen_pos)
+
+        # Store positions for potential other uses
+        self.mouse_grid_pos = (grid_x, grid_y)
+        self.mouse_world_pos = (world_x, world_y)
+
+        # Create overlay surface for text with transparency
+        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+
+        # Draw highlight on the target grid tile
+        grid_screen_x = (grid_x * TILE - self.camera.x) * self.camera.zoom
+        grid_screen_y = (grid_y * TILE - self.camera.y) * self.camera.zoom
+        tile_screen_size = TILE * self.camera.zoom
+
+        # Draw semi-transparent highlight with terrain-specific colors
+        highlight_rect = pygame.Rect(grid_screen_x, grid_screen_y, tile_screen_size, tile_screen_size)
+
+        # Default colors if no specific conditions are met
+        highlight_color = (255, 255, 255, 60)  # White with transparency
+        border_color = (255, 255, 255, 180)    # White with transparency
+
+        # Determine highlight color based on tile type and terrain
+        level_grid = getattr(self.level, "grid", None)
+        if level_grid:
+            if 0 <= grid_y < len(level_grid) and 0 <= grid_x < len(level_grid[0]):
+                from config import TILE_AIR, TILE_FLOOR, TILE_WALL, TILE_SOLID
+                tile_value = level_grid[grid_y][grid_x]
+
+                # Set colors based on tile type
+                if tile_value == TILE_AIR:
+                    highlight_color = (200, 200, 200, 30)  # Light gray for air
+                    border_color = (200, 200, 200, 100)
+                elif tile_value == TILE_FLOOR:
+                    highlight_color = (100, 255, 100, 60)  # Green for floors
+                    border_color = (100, 255, 100, 180)
+                elif tile_value == TILE_WALL:
+                    highlight_color = (255, 100, 100, 60)  # Red for walls
+                    border_color = (255, 100, 100, 180)
+                elif tile_value == TILE_SOLID:
+                    highlight_color = (255, 200, 100, 60)  # Orange for solid tiles
+                    border_color = (255, 200, 100, 180)
+                else:
+                    highlight_color = (255, 255, 255, 60)  # White for unknown
+                    border_color = (255, 255, 255, 180)
+
+                # Override with terrain-specific colors if terrain data exists
+                terrain_grid = getattr(self.level, "terrain_grid", None)
+                if terrain_grid:
+                    if 0 <= grid_y < len(terrain_grid) and 0 <= grid_x < len(terrain_grid[0]):
+                        terrain_id = terrain_grid[grid_y][grid_x]
+
+                        # Set colors based on terrain type
+                        if "water" in terrain_id:
+                            highlight_color = (100, 100, 255, 60)  # Blue for water
+                            border_color = (100, 100, 255, 180)
+                        elif "floor" in terrain_id:
+                            if "sticky" in terrain_id:
+                                highlight_color = (255, 200, 100, 60)  # Orange for sticky floors
+                                border_color = (255, 200, 100, 180)
+                            elif "icy" in terrain_id:
+                                highlight_color = (200, 200, 255, 60)  # Light blue for icy floors
+                                border_color = (200, 200, 255, 180)
+                            elif "fire" in terrain_id:
+                                highlight_color = (255, 150, 50, 60)  # Orange-red for fire floors
+                                border_color = (255, 150, 50, 180)
+                            else:
+                                highlight_color = (200, 200, 200, 60)  # Gray for normal floors
+                                border_color = (200, 200, 200, 180)
+
+        pygame.draw.rect(overlay, highlight_color, highlight_rect)
+        pygame.draw.rect(overlay, border_color, highlight_rect, width=2)
+
+        # Draw crosshair at center of tile
+        crosshair_x = grid_screen_x + tile_screen_size // 2
+        crosshair_y = grid_screen_y + tile_screen_size // 2
+        crosshair_size = max(8, int(tile_screen_size * 0.3))
+        pygame.draw.line(overlay, (255, 255, 100, 200),
+                        (crosshair_x - crosshair_size, crosshair_y),
+                        (crosshair_x + crosshair_size, crosshair_y), 2)
+        pygame.draw.line(overlay, (255, 255, 100, 200),
+                        (crosshair_x, crosshair_y - crosshair_size),
+                        (crosshair_x, crosshair_y + crosshair_size), 2)
+
+        # Prepare info text lines
+        info_lines = [
+            f"Grid: ({grid_x}, {grid_y})",
+            f"World: ({world_x}, {world_y})",
+            # Only show raw grid value when the current level exposes a debug grid
+            "Grid Value: N/A",
+            f"Collision: {collision_type}",
+            f"Terrain: {terrain_type}",
+            f"Terrain ID: {terrain_id}"
+        ]
+
+        # Add area information if available
+        areas = getattr(self.level, "areas", None)
+        if areas and hasattr(areas, "areas_at"):
+            areas_here = areas.areas_at(grid_x, grid_y)
+            if areas_here:
+                area_names = [str(a.type) for a in areas_here]
+                info_lines.append(f"Area: {', '.join(area_names)}")
+
+        # Calculate distance from player
+        player_grid_x = self.player.rect.centerx // TILE
+        player_grid_y = self.player.rect.centery // TILE
+        distance = ((grid_x - player_grid_x) ** 2 + (grid_y - player_grid_y) ** 2) ** 0.5
+        info_lines.append(f"Distance: {distance:.1f}")
+
+        # Draw info panel near cursor
+        text_x = mouse_screen_pos[0] + 20
+        text_y = mouse_screen_pos[1] - 40
+
+        # Adjust position if panel would go off screen
+        panel_width = 200
+        panel_height = len(info_lines) * 18 + 10
+        if text_x + panel_width > WIDTH:
+            text_x = mouse_screen_pos[0] - panel_width - 20
+        if text_y < 0:
+            text_y = mouse_screen_pos[1] + 20
+        if text_y + panel_height > HEIGHT:
+            text_y = HEIGHT - panel_height - 10
+
+        # Draw background panel
+        panel_rect = pygame.Rect(text_x - 5, text_y - 5, panel_width, panel_height)
+        pygame.draw.rect(overlay, (20, 20, 30, 220), panel_rect, border_radius=5)
+        pygame.draw.rect(overlay, (255, 255, 100, 180), panel_rect, width=1, border_radius=5)
+
+        # Draw text lines
+        for i, line in enumerate(info_lines):
+            color = (255, 255, 255) if i < 3 else (200, 200, 255)
+            draw_text(overlay, line, (text_x, text_y + i * 18), color, size=14)
+
+        # Apply overlay
+        self.screen.blit(overlay, (0, 0))
+
     def draw(self):
         self.screen.fill(BG)
         self.level.draw(self.screen, self.camera)
@@ -470,6 +662,9 @@ class Game:
 
         # Optional debug overlay for areas
         self._draw_area_overlay()
+
+        # Optional grid position overlay
+        self._draw_grid_position_overlay()
 
         # HUD
         x, y = 16, 16
@@ -486,9 +681,9 @@ class Game:
         
         # Wall jump cooldown bar (orange) - positioned at bottom of other bars
         if self.player.wall_jump_cooldown > 0:
-            pct = 1 - (self.player.wall_jump_cooldown / 16)  # WALL_JUMP_COOLDOWN is now 16 frames
+            pct = 1 - (self.player.wall_jump_cooldown / WALL_JUMP_COOLDOWN)  # Use config value
             pygame.draw.rect(self.screen, (80,80,80), pygame.Rect(x, y, 120, 6), border_radius=3)
-            pygame.draw.rect(self.screen, WALL_JUMP_AIRBORNE_COLOR, pygame.Rect(x, y, int(120*pct), 6), border_radius=3)
+            pygame.draw.rect(self.screen, (255, 165, 0), pygame.Rect(x, y, int(120*pct), 6), border_radius=3)  # Orange color
         # stamina bar (if player has stamina)
         y += 12
         if hasattr(self.player, 'stamina') and hasattr(self.player, 'max_stamina'):
@@ -514,23 +709,14 @@ class Game:
                 draw_text(self.screen, "!", (x + 124, y-6), (255,80,80), size=18, bold=True)
             y += 12
 
-        # show room/level info on HUD
-        if self.use_procedural:
-            draw_text(self.screen, f"Level {self.level_index}", (WIDTH-220, 8), WHITE, size=16)
-        else:
-            draw_text(self.screen, f"Room {self.level_index+1}/{ROOM_COUNT}", (WIDTH-220, 8), WHITE, size=16)
+        # show room info on HUD (static rooms only)
+        draw_text(self.screen, f"Room {self.level_index+1}/{ROOM_COUNT}", (WIDTH-220, 8), WHITE, size=16)
 
         # selected class
         draw_text(self.screen, f"Class: {getattr(self.player, 'cls', 'Unknown')}", (WIDTH-220, 28), (200,200,200), size=16)
 
-        # seed info (for sharing / reproducibility)
-        if self.show_seed_info:
-            ws = getattr(self, "world_seed", None)
-            ls = getattr(self, "current_level_seed", None)
-            if ws is not None:
-                draw_text(self.screen, f"Seed: {ws}", (16, 56), (160, 160, 200), size=14)
-            if ls is not None:
-                draw_text(self.screen, f"LSeed: {ls}", (16, 72), (120, 120, 180), size=12)
+        # Static level label (no procedural progression metadata)
+        draw_text(self.screen, f"Level {self.level_index + 1}", (16, 56), (220, 200, 160), size=16)
 
         # Skill bar (MOBA-style): show 1/2/3 cooldowns and active highlights
         sbx, sby = 16, HEIGHT - 80
@@ -594,13 +780,21 @@ class Game:
             draw_text(self.screen, "Time Distorted", (WIDTH-180, HEIGHT-220), (150, 150, 255), size=16, bold=True)
 
         draw_text(self.screen,
-                   "Move A/D | Jump Space/K | Dash Shift/J | Attack L/Mouse | Up/Down+Attack for Up/Down slash (Down=Pogo) | Shop F6",
+                   "Move A/D | Jump Space/K | Dash Shift/J | Attack L/Mouse | Up/Down+Attack for Up/Down slash (Down=Pogo) | Shop F6 | God F1 | No-clip: Double-space in god mode (WASD to float)",
                    (12, HEIGHT-28), (180,180,200), size=16)
         # Money display moved to be under class
         draw_text(self.screen, f"Coins: {self.player.money}", (WIDTH-220, 48), (255, 215, 0), bold=True)
 
-        # God + Area labels
+        # God + No-clip + Area labels
         hud_x = WIDTH - 64
+        if getattr(self.player, 'no_clip', False):
+            draw_text(self.screen, "NO-CLIP", (hud_x, 8), (200,100,255), bold=True)
+            hud_x -= 8  # slight shift for area tag
+            # Show floating mode if active
+            if getattr(self.player, 'floating_mode', False):
+                draw_text(self.screen, "FLOAT", (hud_x, 8), (100,255,200), bold=True)
+                hud_x -= 8
+
         if getattr(self.player, 'god', False):
             draw_text(self.screen, "GOD", (hud_x, 8), (255,200,80), bold=True)
             hud_x -= 8  # slight shift for area tag
@@ -675,8 +869,14 @@ class Game:
                             self.menu.pause_menu()
                     # Developer cheats / debug tools
                     elif ev.key == pygame.K_F1:
-                        # toggle god mode
+                        # toggle god mode (invincibility only)
                         self.player.god = not getattr(self.player, 'god', False)
+                        floating.append(DamageNumber(
+                            self.player.rect.centerx,
+                            self.player.rect.top - 12,
+                            f"God Mode {'ON' if self.player.god else 'OFF'}!",
+                            (255, 200, 80) if self.player.god else (200, 200, 200)
+                        ))
                     elif ev.key == pygame.K_F2:
                         # refill consumables
                         self.inventory.add_all_consumables()
@@ -709,31 +909,14 @@ class Game:
                         continue
                     # Teleport / navigation cheats:
                     elif ev.key == pygame.K_F8:
-                        # Load deterministic terrain/area coverage test level
-                        test_level = generate_terrain_test_level()
-                        self.level = test_level
-                        self.enemies = getattr(test_level, "enemies", [])
-                        self.in_terrain_test_level = True
-                        # Spawn player at test spawn
-                        sx, sy = self.level.spawn
-                        self.player.rect.topleft = (sx, sy)
-                        # Clear transient effects
-                        hitboxes.clear()
-                        floating.clear()
-                        continue
-                    elif ev.key == pygame.K_F9:
-                        # Toggle area/terrain overlay visualization
-                        self.debug_show_area_overlay = not self.debug_show_area_overlay
-                        continue
-                    elif ev.key == pygame.K_F10:
-                        if not self.use_procedural:
-                            self.goto_room(3)
+                        # Reserved: previously procedural terrain test; now no-op
+                        continue         
                     elif ev.key == pygame.K_F11:
-                        if not self.use_procedural:
-                            self.goto_room(4)
+                        # Reserved: previously procedural regen; now no-op
+                        continue
                     elif ev.key == pygame.K_F12:
-                        if not self.use_procedural:
-                            self.goto_room(5)
+                        # Teleport to room 6 (boss room) for debug
+                        self.goto_room(5)
 
             if not self.inventory.inventory_open and not self.shop.shop_open:
                 self.update()
@@ -749,6 +932,9 @@ class Game:
             {'label': "God Mode (F1)", 'type': 'toggle',
              'getter': lambda: getattr(self.player, 'god', False),
              'setter': lambda v: setattr(self.player, 'god', v)},
+            {'label': "No-clip Mode (F10)", 'type': 'toggle',
+             'getter': lambda: getattr(self.player, 'no_clip', False),
+             'setter': lambda v: setattr(self.player, 'no_clip', v)},
             {'label': "Refill Consumables (F2)", 'type': 'action',
              'action': self.inventory.add_all_consumables},
             {'label': "Enemy Vision Rays (F3)", 'type': 'toggle',
@@ -813,6 +999,8 @@ class Game:
             text = opt['label']
             if opt['type'] == 'toggle':
                 text = f"{text}: {'ON' if opt['getter']() else 'OFF'}"
+            elif opt['type'] == 'info':
+                text = f"{text}: {opt['getter']()}"
             elif opt['type'] == 'action' and not opt.get('close'):
                 text = f"{text}"
             draw_text(self.screen, text, (row.x + 12, row.y + 8), (220,220,230), size=18)
@@ -851,9 +1039,8 @@ class Game:
 
     def debug_teleport_menu(self):
         """
-        Teleport debug menu.
-        - Procedural mode: treat idx as unbounded level index (no wrapping).
-        - Legacy mode: wrap using ROOM_COUNT as before.
+        Teleport debug menu for static rooms.
+        Wraps using ROOM_COUNT.
         """
         idx = self.level_index
         while True:
@@ -865,15 +1052,9 @@ class Game:
                     if ev.key in (pygame.K_ESCAPE, pygame.K_F5):
                         return
                     elif ev.key == pygame.K_LEFT:
-                        if self.use_procedural:
-                            idx = max(0, idx - 1)
-                        else:
-                            idx = (idx - 1) % ROOM_COUNT
+                        idx = (idx - 1) % ROOM_COUNT
                     elif ev.key == pygame.K_RIGHT:
-                        if self.use_procedural:
-                            idx = idx + 1
-                        else:
-                            idx = (idx + 1) % ROOM_COUNT
+                        idx = (idx + 1) % ROOM_COUNT
                     elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
                         self.goto_room(idx)
                         return
@@ -892,16 +1073,8 @@ class Game:
         info = "Left/Right choose, Enter confirm, Esc to cancel"
         draw_text(self.screen, info, (panel.x + 24, panel.bottom - 36), (180,180,200), size=16)
 
-        if self.use_procedural:
-            draw_text(self.screen, f"Level {idx}", (panel.centerx - 80, panel.centery - 10),
-                      (220,220,240), size=32, bold=True)
-            ws = getattr(self, "world_seed", None)
-            if ws is not None:
-                draw_text(self.screen, f"Seed {ws}", (panel.centerx - 80, panel.centery + 26),
-                          (180,180,220), size=18)
-        else:
-            draw_text(self.screen, f"Room {idx+1}/{ROOM_COUNT}", (panel.centerx - 80, panel.centery - 10),
-                      (220,220,240), size=32, bold=True)
+        draw_text(self.screen, f"Room {idx+1}/{ROOM_COUNT}", (panel.centerx - 80, panel.centery - 10),
+                  (220,220,240), size=32, bold=True)
 
 
 if __name__ == '__main__':

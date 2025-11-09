@@ -1,9 +1,9 @@
 import pygame
 import random
 from config import WIDTH, HEIGHT, WHITE, GREEN, CYAN
-from utils import draw_text, get_font
-from items import build_consumable_catalog, build_armament_catalog
-from entities import floating, DamageNumber
+from ..core.utils import draw_text, get_font
+from .items import build_consumable_catalog, build_armament_catalog
+from ..entities.entities import floating, DamageNumber
 
 
 class Shop:

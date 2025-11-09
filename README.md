@@ -137,17 +137,66 @@ Each enemy is drawn as a colored rectangle; during their invulnerability frames 
    - Color: RGB(140, 140, 160) steel; i-frames: RGB(100, 100, 120)
    - Patterns: `!` diagonal dash, `!!` shoot, `!!` radial stun (AoE) that applies a stun tag within ~72 radius.
 
-## Repo layout
+## Project Structure
 
-- `main.py` — Game loop, menus (Title/How to Play/Class Select/Pause), HUD, collisions
-- `level.py` — ASCII room definitions, parsing, drawing, door lock coloring
-- `entities.py` — Player and enemies, skills, projectiles, hitboxes, AIs
-- `camera.py` — Camera to-screen transforms
-- `config.py` — Config constants (sizes, colors, FPS)
-- `utils.py` — Fonts, text drawing, helpers
-- `inventory.py` — Inventory system, consumables, equipment management
-- `items.py` — Item definitions for consumables and armaments
-- `menu.py` — Menu system (title, class select, pause, game over)
+The codebase is organized into logical modules for better maintainability:
+
+```
+├── main.py                    # Entry point, game loop, menus, HUD
+├── config.py                  # Game configuration constants
+├── README.md                  # This file
+├── guide.txt                  # Quick reference guide
+│
+├── src/                       # Core source code
+│   ├── entities/             # Entity system
+│   │   ├── entities.py       # Entity factory and exports
+│   │   ├── player_entity.py  # Player class
+│   │   ├── enemy_entities.py # All enemy types
+│   │   ├── entity_common.py  # Shared entity utilities
+│   │   └── components/       # Component system
+│   │       ├── physics_component.py
+│   │       ├── combat_component.py
+│   │       └── vision_component.py
+│   │
+│   ├── systems/              # Game systems
+│   │   ├── inventory.py      # Inventory management
+│   │   ├── items.py          # Item definitions
+│   │   ├── shop.py           # Shop system
+│   │   ├── menu.py           # Menu system
+│   │   └── camera.py         # Camera management
+│   │
+│   ├── level/                # Level generation
+│   │   ├── level_generator.py      # Procedural generation
+│   │   ├── generation_algorithms.py # Generation algorithms
+│   │   ├── level.py               # Legacy static levels
+│   │   ├── level_validator.py     # Level validation
+│   │   ├── level_progression.py   # Difficulty scaling
+│   │   ├── seed_manager.py        # Seed management
+│   │   ├── terrain_system.py      # Terrain types
+│   │   ├── area_system.py         # Area definitions
+│   │   └── area_builder.py        # Area building
+│   │
+│   ├── ai/                   # AI and behaviors
+│   │   └── enemy_movement.py # Enemy AI patterns
+│   │
+│   └── core/                 # Core utilities
+│       └── utils.py          # Helper functions
+│
+├── docs/                     # Documentation
+│   ├── developer_cheat(must read).txt
+│   └── level_generation_system_diagram.md
+│
+└── assets/                   # Game assets
+    ├── performance_benchmarks.py
+    └── inventory_debug.png
+```
+
+### Key Files:
+- **`main.py`** — Game loop, menus (Title/How to Play/Class Select/Pause), HUD, collisions
+- **`config.py`** — Config constants (sizes, colors, FPS, physics parameters)
+- **`src/entities/`** — All player and enemy code with component-based architecture
+- **`src/level/`** — Procedural level generation system
+- **`src/systems/`** — Inventory, shop, menu, and camera systems
 
 ## Collaboration tips
 

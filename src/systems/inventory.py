@@ -1,9 +1,9 @@
 import pygame
 import random
 from config import WIDTH, HEIGHT, FPS, WHITE
-from utils import draw_text, get_font
-from items import Consumable, HealConsumable, ManaConsumable, SpeedConsumable, JumpBoostConsumable, StaminaBoostConsumable, build_armament_catalog, build_consumable_catalog
-from entities import floating, DamageNumber
+from ..core.utils import draw_text, get_font
+from .items import Consumable, HealConsumable, ManaConsumable, SpeedConsumable, JumpBoostConsumable, StaminaBoostConsumable, build_armament_catalog, build_consumable_catalog
+from ..entities.entities import floating, DamageNumber
 
 from dataclasses import dataclass
 from typing import Optional

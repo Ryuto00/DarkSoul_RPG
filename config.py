@@ -47,23 +47,51 @@ COMBO_RESET = 18
 SWORD_DAMAGE = 1
 POGO_BOUNCE_VY = -11.5
 
-# Wall jump and wall slide mechanics
-WALL_SLIDE_SPEED = 2.0      # Maximum speed while sliding down wall
-WALL_JUMP_H_SPEED = 6.5     # Horizontal velocity for wall jump (softer, less "cannon" feel)
-WALL_JUMP_V_SPEED = -9.5    # Vertical velocity for wall jump
-WALL_STICK_TIME = 6         # Frames player sticks to wall after leaving ground
-WALL_JUMP_COOLDOWN = 16     # Frames before player can stick to wall again after wall jump
+# Wall jump and wall slide mechanics - NEW PHYSICS-BASED SYSTEM
+WALL_SLIDE_SPEED = 1.5          # Controlled descent speed when sliding
+WALL_SLIDE_GRAVITY_SCALE = 0.3  # Reduced gravity while on wall for controlled slide
 
-# Wall jump float & control tuning
-WALL_JUMP_FLOAT_FRAMES = 10             # Slightly longer float for softer vertical arc
-WALL_JUMP_FLOAT_GRAVITY_SCALE = 0.32    # Reduced gravity during float
-WALL_JUMP_CONTROL_FRAMES = 18           # During this window, wall jump is more steerable & clamped
+# Wall jump physics (acceleration-based instead of instant velocity)
+WALL_JUMP_H_ACCEL = 0.6         # Horizontal acceleration away from wall
+WALL_JUMP_H_MAX_SPEED = 4.0     # Maximum horizontal speed (gentler than old 7.5)
+WALL_JUMP_V_SPEED = -10.5       # Initial vertical jump velocity
+WALL_JUMP_GRAVITY_SCALE = 0.8   # Gravity scale during wall jump ascent
 
-# Wall jump airborne window mechanics
-WALL_JUMP_AIRBORNE_FRAMES = 45          # 0.75 second airborne window after wall jump for free action
-WALL_JUMP_AIRBORNE_COLOR = (255, 165, 0)  # Orange color for wall jump cooldown bar
+# Wall jump timing and forgiveness
+WALL_JUMP_COYOTE_TIME = 8       # Frames after leaving wall you can still jump
+WALL_JUMP_BUFFER_TIME = 6       # Frames jump input is remembered when touching wall
+WALL_JUMP_COOLDOWN = 10         # Minimum frames between wall jumps
+WALL_REATTACH_TIME = 8          # Minimum frames before can reattach to wall
+
+# Wall slide and control
+WALL_LEAVE_H_BOOST = 2.0        # Gentle initial push to detach from wall
+WALL_CONTROL_MULTIPLIER = 1.5   # Enhanced air control during wall jump
+WALL_STICK_FRAMES = 4           # Frames player "sticks" to wall for precision
 
 TILE = 24
+
+# === Tile System Constants ===
+# Tile type values for the grid system
+TILE_AIR = 0          # Empty/air - no collision
+TILE_FLOOR = 1        # Floor - top-only collision (can jump through)
+TILE_WALL = 2         # Wall - full collision from all sides
+TILE_SOLID = 3        # Non-surface solid - collision from all sides except top (ceilings)
+
+# Tile colors for visual distinction
+TILE_COLORS = {
+    TILE_AIR: None,           # Transparent - no rendering
+    TILE_FLOOR: (101, 67, 33),  # Brown - platform top
+    TILE_WALL: (54, 60, 78),    # Dark gray - full wall
+    TILE_SOLID: (78, 84, 102),  # Medium gray - ceiling/overhang
+}
+
+# Tile character symbols for hardcoded rooms
+TILE_SYMBOLS = {
+    '.': TILE_FLOOR,  # Floor tile
+    '#': TILE_WALL,   # Wall tile
+    '~': TILE_SOLID,  # Solid/ceiling tile
+    ' ': TILE_AIR,    # Air/empty
+}
 
 # === Procedural Level Generation Configuration ===
 # Level generation parameters

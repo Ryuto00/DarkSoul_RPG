@@ -1,0 +1,1 @@
+"""Game Dev Haridd - Core source package"""

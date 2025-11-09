@@ -1,10 +1,16 @@
 import sys
+import os
+
+# Add the root directory to Python path so we can import config
+root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, root_dir)
+
 import pygame
-from config import WIDTH, HEIGHT, FPS, LEVEL_TYPE, DIFFICULTY, LEVEL_TYPES, DIFFICULTY_LEVELS
-from utils import draw_text, get_font
-from level import Level, ROOM_COUNT
-from entities import Player, hitboxes, floating
-from camera import Camera
+from config import WIDTH, HEIGHT, FPS
+from src.core.utils import draw_text, get_font
+from src.level.level import Level, ROOM_COUNT
+from src.entities.entities import Player, hitboxes, floating
+from src.systems.camera import Camera
 
 
 class Menu:
@@ -98,10 +104,10 @@ class Menu:
 
     def title_screen(self):
         """Blocking title menu: Start Game / Class Select / How to Play / Quit.
-        Sets self.game.selected_class and allows basic generation config.
+        Static-only version (procedural generation disabled).
         """
-        # 1. Start Game, 2. Class Select, 3. Generation Options, 4. How to Play, 5. Quit
-        options = ["Start Game", "Class Select", "Generation Options", "How to Play", "Quit"]
+        # 1. Start Game, 2. Class Select, 3. How to Play, 4. Quit
+        options = ["Start Game", "Class Select", "How to Play", "Quit"]
         idx = 0
         while True:
             self.clock.tick(FPS)
@@ -121,8 +127,6 @@ class Menu:
                             return
                         elif choice == "Class Select":
                             self.game.selected_class = self.select_class()
-                        elif choice == "Generation Options":
-                            self.generation_options_menu()
                         elif choice == "How to Play":
                             self.how_to_play_screen()
                         elif choice == "Quit":
@@ -132,11 +136,9 @@ class Menu:
                         return
                     elif ev.key in (pygame.K_2, pygame.K_c):
                         self.game.selected_class = self.select_class()
-                    elif ev.key in (pygame.K_3, pygame.K_g):
-                        self.generation_options_menu()
-                    elif ev.key in (pygame.K_4, pygame.K_h):
+                    elif ev.key in (pygame.K_3, pygame.K_h):
                         self.how_to_play_screen()
-                    elif ev.key in (pygame.K_5, pygame.K_q):
+                    elif ev.key in (pygame.K_4, pygame.K_q):
                         pygame.quit(); sys.exit()
 
             # draw title menu
@@ -147,17 +149,12 @@ class Menu:
                 y = 200 + i*52
                 col = (255,220,140) if i == idx else (200,200,200)
                 draw_text(self.screen, f"{i+1}. {opt}", (WIDTH//2 - 160, y), col, size=28)
-            # Summary line with current class and generation settings
-            gen_mode = "ON" if getattr(self.game, "user_wants_procedural", getattr(self.game, "use_procedural", True)) else "OFF"
-            lt = getattr(self.game, "level_type", LEVEL_TYPE)
-            diff = getattr(self.game, "difficulty", DIFFICULTY)
-            ws = getattr(self.game, "world_seed", None)
-            seed_txt = f"Seed: {ws}" if ws is not None else "Seed: (auto)"
+            # Summary line with current class only (procedural generation removed)
             draw_text(self.screen,
-                      f"Class: {self.game.selected_class} | Mode: {gen_mode} {lt} D{diff} | {seed_txt}",
-                      (WIDTH//2 - 260, HEIGHT-96), (180,200,220), size=18)
+                      f"Class: {self.game.selected_class}",
+                      (WIDTH//2 - 140, HEIGHT-96), (180,200,220), size=18)
             draw_text(self.screen,
-                      "Use Up/Down, Enter to select • 1-5 hotkeys",
+                      "Use Up/Down, Enter to select • 1-4 hotkeys",
                       (WIDTH//2 - 210, HEIGHT-64), (160,160,180), size=16)
             pygame.display.flip()
 
@@ -235,133 +232,13 @@ class Menu:
                 draw_text(self.screen, f"{i+1}. {opt}", (WIDTH//2 - 80, y), col, size=28)
             draw_text(self.screen, "Use Up/Down, Enter to select, Esc/R to resume", (WIDTH//2 - 220, HEIGHT-64), (160,160,180), size=16)
             pygame.display.flip()
-
+ 
     def generation_options_menu(self):
         """
-        Simple blocking menu to configure procedural generation:
-        - Toggle procedural vs static (stores user intent)
-        - Cycle level type
-        - Cycle difficulty
-        - Enter / randomize world seed
+        Legacy stub preserved for compatibility.
+        Procedural generation has been removed; this now returns immediately.
         """
-        # Ensure defaults exist
-        if not hasattr(self.game, "user_wants_procedural"):
-            # Fallback to existing flag if present, else default True
-            default_proc = getattr(self.game, "use_procedural", True)
-            self.game.user_wants_procedural = bool(default_proc)
-        if not hasattr(self.game, "level_type"):
-            self.game.level_type = LEVEL_TYPE
-        if not hasattr(self.game, "difficulty"):
-            self.game.difficulty = DIFFICULTY
-        # Keep internal use_procedural in sync for menus/HUD; actual loads derive per-call.
-        self.game.use_procedural = bool(self.game.user_wants_procedural)
-
-        idx = 0
-        options = ["Use Procedural Generation", "Level Type", "Difficulty", "World Seed", "Randomize Seed", "Back"]
-        typing_seed = False
-        seed_str = str(getattr(self.game, "world_seed", ""))
-
-        while True:
-            self.clock.tick(FPS)
-            for ev in pygame.event.get():
-                if ev.type == pygame.QUIT:
-                    pygame.quit(); sys.exit()
-                elif ev.type == pygame.KEYDOWN:
-                    if typing_seed:
-                        if ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
-                            # Commit typed seed
-                            try:
-                                if seed_str.strip():
-                                    new_seed = int(seed_str.strip())
-                                    self.game.seed_manager.set_world_seed(new_seed)
-                                    self.game.world_seed = new_seed
-                                else:
-                                    # Empty: auto-generate by reinitializing SeedManager
-                                    self.game.seed_manager = self.game.seed_manager.__class__()
-                                    self.game.world_seed = self.game.seed_manager.get_world_seed()
-                            except ValueError:
-                                # Ignore invalid input, keep previous seed
-                                pass
-                            typing_seed = False
-                        elif ev.key == pygame.K_ESCAPE:
-                            typing_seed = False
-                        elif ev.key == pygame.K_BACKSPACE:
-                            seed_str = seed_str[:-1]
-                        elif ev.unicode.isdigit():
-                            if len(seed_str) < 10:
-                                seed_str += ev.unicode
-                        continue
-
-                    if ev.key == pygame.K_ESCAPE:
-                        return
-                    elif ev.key == pygame.K_UP:
-                        idx = (idx - 1) % len(options)
-                    elif ev.key == pygame.K_DOWN:
-                        idx = (idx + 1) % len(options)
-                    elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
-                        choice = options[idx]
-                        if choice == "Use Procedural Generation":
-                            # Update user intent only; actual load logic consults this flag.
-                            self.game.user_wants_procedural = not bool(self.game.user_wants_procedural)
-                            # Keep display/helper flag aligned for now.
-                            self.game.use_procedural = bool(self.game.user_wants_procedural)
-                        elif choice == "Level Type":
-                            cur = getattr(self.game, "level_type", LEVEL_TYPE)
-                            types = LEVEL_TYPES
-                            if cur in types:
-                                ni = (types.index(cur) + 1) % len(types)
-                            else:
-                                ni = 0
-                            self.game.level_type = types[ni]
-                        elif choice == "Difficulty":
-                            cur = getattr(self.game, "difficulty", DIFFICULTY)
-                            levels = DIFFICULTY_LEVELS
-                            if cur in levels:
-                                ni = (levels.index(cur) + 1) % len(levels)
-                            else:
-                                ni = 0
-                            self.game.difficulty = levels[ni]
-                        elif choice == "World Seed":
-                            typing_seed = True
-                            seed_str = str(getattr(self.game, "world_seed", ""))
-                        elif choice == "Randomize Seed":
-                            # Rebuild SeedManager with random seed
-                            self.game.seed_manager = self.game.seed_manager.__class__()
-                            self.game.world_seed = self.game.seed_manager.get_world_seed()
-                        elif choice == "Back":
-                            return
-
-            # Draw menu UI
-            self.screen.fill((10, 10, 16))
-            draw_text(self.screen, "GENERATION OPTIONS", (WIDTH//2 - 210, 40), (255,220,140), size=40, bold=True)
-
-            # Reflect user intent in UI; generation failures must not override this.
-            gen_mode = "ON" if self.game.user_wants_procedural else "OFF"
-            lt = getattr(self.game, "level_type", LEVEL_TYPE)
-            diff = getattr(self.game, "difficulty", DIFFICULTY)
-            ws = getattr(self.game, "world_seed", None)
-
-            values = [
-                f"Procedural Generation: {gen_mode}",
-                f"Level Type: {lt}",
-                f"Difficulty: {diff}",
-                f"World Seed: {seed_str if typing_seed else (ws if ws is not None else '(auto)')}",
-                "Randomize Seed",
-                "Back"
-            ]
-
-            base_y = 140
-            for i, label in enumerate(options):
-                y = base_y + i * 40
-                col_bg = (70, 70, 90) if i == idx else (40, 40, 60)
-                col_fg = (255,220,140) if i == idx else (200,200,210)
-                rect = pygame.Rect(WIDTH//2 - 260, y - 6, 520, 32)
-                pygame.draw.rect(self.screen, col_bg, rect, border_radius=8)
-                draw_text(self.screen, values[i], (rect.x + 16, y), col_fg, size=22)
-
-            hint = "Enter: Apply  •  Esc: Back  •  Type digits for seed when 'World Seed' selected"
-            draw_text(self.screen, hint, (WIDTH//2 - 320, HEIGHT - 56), (150,150,180), size=16)
-            pygame.display.flip()
+        return
 
     def settings_screen(self):
         """Simple settings placeholder. Press Esc to go back."""
