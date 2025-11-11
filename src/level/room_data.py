@@ -52,6 +52,7 @@ class RoomData:
     spawn_areas: List['SpawnArea'] = field(default_factory=list)
     difficulty_rating: int = 1
     depth_from_start: int = 0
+    player_spawn: Optional[Tuple[int, int]] = None  # 3x3 spawn center for player start
 
     def is_in_bounds(self, x: int, y: int) -> bool:
         """Check if coordinate is within room bounds."""

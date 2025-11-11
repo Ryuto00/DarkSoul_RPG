@@ -171,6 +171,13 @@ class Level:
                 print(line)
             print("[DEBUG] End Room ASCII\n")
             self.procedural = True
+            
+            # NEW: Use player_spawn from procedural room when entering fresh level
+            if hasattr(room_data, 'player_spawn') and room_data.player_spawn:
+                # Convert procedural spawn center to world coordinates
+                spawn_x, spawn_y = room_data.player_spawn
+                self.spawn = (spawn_x * TILE, spawn_y * TILE)
+                print(f"[LEVEL DEBUG] Using procedural player spawn at ({spawn_x}, {spawn_y}) -> world {self.spawn}")
         else:
             # LEGACY: Use static rooms
             self.index = index % len(ROOMS)

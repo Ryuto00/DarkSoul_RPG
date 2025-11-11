@@ -4,231 +4,28 @@ import math
 from typing import Tuple, List, Set, Optional
 
 from src.level.room_data import RoomData, TileCell, GenerationConfig, MovementAttributes, SpawnArea
+# Removed: Platform import since platforms are no longer used
 from src.level.traversal_verification import find_valid_ground_locations, verify_traversable
 from src.core.utils import bresenham_line
 
 
-@dataclass
-class Platform:
-    """
-    Represents a rectangular platform in the room.
-
-    Attributes:
-        top_left: Top-left corner coordinate (x, y)
-        width: Width in tiles
-        height: Height in tiles (usually 1 for flat platforms)
-    """
-    top_left: Tuple[int, int]
-    width: int
-    height: int = 1
-
-    def get_all_coords(self) -> List[Tuple[int, int]]:
-        """Return all (x, y) coordinates occupied by this platform."""
-        coords = []
-        x, y = self.top_left
-        for dy in range(self.height):
-            for dx in range(self.width):
-                coords.append((x + dx, y + dy))
-        return coords
+# All legacy platform-related types and helpers (Platform/add/remove/generate/exclusion)
+# have been fully removed from the procedural generation module.
+# PCG no longer creates platform tiles; only corridors, spawn areas, and doors are used.
 
 
-def add_platform(room_data: RoomData, platform: Platform) -> None:
-    """
-    Add a platform to the room by setting tiles to WALL.
-
-    Args:
-        room_data: Room to modify
-        platform: Platform definition
-
-    Modifies room_data.grid in place.
-    """
-    for x, y in platform.get_all_coords():
-        if room_data.is_in_bounds(x, y):
-            room_data.set_tile(x, y, TileCell(t="WALL", flags={"PLATFORM"}))
+# REMOVED: create_exclusion_map was only used by place_platforms
+# Since platforms are no longer placed, this exclusion logic is unused.
+# Function kept for compatibility but no longer called by PCG pipeline.
 
 
-def remove_platform(room_data: RoomData, platform: Platform) -> None:
-    """
-    Remove a platform from the room by restoring tiles to default.
-
-    Args:
-        room_data: Room to modify
-        platform: Platform to remove
-
-    Modifies room_data.grid in place by deleting entries.
-    """
-    for x, y in platform.get_all_coords():
-        if (x, y) in room_data.grid:
-            # Remove from sparse grid (reverts to default_tile)
-            del room_data.grid[(x, y)]
+# REMOVED: platform_overlaps_exclusion was only used by place_platforms
+# Since platforms are no longer placed, this function is unused.
+# Kept for compatibility in case other code references it.
 
 
-def generate_random_platform(
-    room_data: RoomData,
-    config: GenerationConfig,
-    rng: random.Random
-) -> Platform:
-    """
-    Generate a random platform that fits within room bounds.
-
-    Args:
-        room_data: Room to place platform in
-        config: Generation configuration
-        rng: Random number generator (for seeded generation)
-
-    Returns:
-        A Platform object with random position and size
-    """
-    # Platform size constraints
-    min_platform_width = 2
-    max_platform_width = 6
-    platform_height = 1  # Flat platforms only for now
-
-    # Random size
-    width = rng.randint(min_platform_width, max_platform_width)
-
-    # Random position (ensure it fits in room)
-    max_x = room_data.size[0] - width
-    max_y = room_data.size[1] - 2  # Don't place on floor or ceiling
-
-    if max_x <= 0 or max_y <= 0:
-        # Room too small for platforms
-        return Platform(top_left=(0, 0), width=1, height=1)
-
-    x = rng.randint(1, max_x)
-    y = rng.randint(1, max_y)
-
-    return Platform(
-        top_left=(x, y),
-        width=width,
-        height=platform_height
-    )
-
-
-def create_exclusion_map(room_data: RoomData, config: GenerationConfig) -> Set[Tuple[int, int]]:
-    """
-    Create a set of coordinates where platforms should NOT be placed.
-
-    Exclusion zones:
-    - 3x3 area around entrance
-    - 3x3 area around exit
-    - Direct line between entrance and exit (critical path)
-
-    Args:
-        room_data: Room with door coordinates
-        config: Generation configuration
-
-    Returns:
-        Set of (x, y) coordinates to avoid
-    """
-    excluded = set()
-
-    # Exclude area around entrance
-    if room_data.entrance_coords:
-        ex, ey = room_data.entrance_coords
-        for dx in range(-1, 2):
-            for dy in range(-1, 2):
-                excluded.add((ex + dx, ey + dy))
-
-    # Exclude area around exit
-    if room_data.exit_coords:
-        ex, ey = room_data.exit_coords
-        for dx in range(-1, 2):
-            for dy in range(-1, 2):
-                excluded.add((ex + dx, ey + dy))
-
-    # Exclude direct line between entrance and exit (critical path hint)
-    if room_data.entrance_coords and room_data.exit_coords:
-        line_coords = bresenham_line(room_data.entrance_coords[0], room_data.entrance_coords[1], room_data.exit_coords[0], room_data.exit_coords[1])
-        for coord in line_coords:
-            # Exclude 1 tile above and below line
-            excluded.add(coord)
-            excluded.add((coord[0], coord[1] - 1))
-            excluded.add((coord[0], coord[1] + 1))
-
-    return excluded
-
-
-def platform_overlaps_exclusion(
-    platform: Platform,
-    exclusion_map: Set[Tuple[int, int]]
-) -> bool:
-    """
-    Check if platform overlaps any excluded coordinates.
-
-    Args:
-        platform: Platform to check
-        exclusion_map: Set of excluded coordinates
-
-    Returns:
-        True if any overlap exists, False otherwise
-    """
-    platform_coords = set(platform.get_all_coords())
-    return bool(platform_coords & exclusion_map)  # Set intersection
-
-
-def place_platforms(
-    room_data: RoomData,
-    config: GenerationConfig,
-    movement_attrs: MovementAttributes
-) -> int:
-    """
-    Place platforms in room with per-platform validation and rollback.
-
-    Strategy:
-    1. Create exclusion map to protect doors
-    2. Loop max_platform_attempts times
-    3. For each attempt:
-       - Generate random platform
-       - Check if it overlaps exclusions (skip if yes)
-       - Add platform to room
-       - Validate traversability
-       - If invalid: rollback (remove platform)
-       - If valid: keep platform
-
-    Args:
-        room_data: Room to modify
-        config: Generation configuration
-        movement_attrs: Player movement capabilities for validation
-
-    Returns:
-        Number of platforms successfully added
-
-    Modifies room_data.grid in place.
-    """
-    # Initialize seeded RNG for reproducibility
-    rng = random.Random(config.seed)
-
-    # Create exclusion zones around doors
-    exclusion_map = create_exclusion_map(room_data, config)
-
-    platforms_added = 0
-
-    for attempt in range(config.platform_placement_attempts):
-        # Generate random platform
-        platform = generate_random_platform(room_data, config, rng)
-
-        # Skip if overlaps exclusion zones
-        if platform_overlaps_exclusion(platform, exclusion_map):
-            continue
-
-        # Add platform to room
-        add_platform(room_data, platform)
-
-        # CRITICAL: Validate traversability after EACH platform
-        if verify_traversable(room_data, movement_attrs):
-            # Platform is valid - keep it
-            platforms_added += 1
-
-            # Optional: Add this platform's coords to exclusion map
-            # to ensure spacing between platforms
-            exclusion_map.update(platform.get_all_coords())
-        else:
-            # Platform breaks traversability - ROLLBACK
-            remove_platform(room_data, platform)
-            # Continue trying other platforms
-
-    return platforms_added
+# REMOVED: Platforms are no longer placed as part of PCG
+# This function and its helpers are kept for compatibility but not called.
 
 
 def calculate_spawn_density(
@@ -694,9 +491,64 @@ def generate_room_layout(config: GenerationConfig) -> RoomData:
         config.movement_attributes.player_height
     )
     
-    # Initialize walker at room center
-    walker_x = width // 2
-    walker_y = height // 2
+    # === NEW: Choose quadrant corner for 3x3 spawn area ===
+    # Define four interior corners (avoiding outer boundaries)
+    corners = [
+        (1, 1),                    # Top-left interior corner
+        (width - 2, 1),            # Top-right interior corner
+        (1, height - 2),            # Bottom-left interior corner
+        (width - 2, height - 2)     # Bottom-right interior corner
+    ]
+    
+    # Randomly choose one corner
+    spawn_corner_x, spawn_corner_y = rng.choice(corners)
+    
+    # Adjust center to ensure 3x3 fits inside room boundaries
+    # Move 1 tile inward from corner to be safe center
+    if spawn_corner_x == 1:
+        spawn_center_x = 2
+    else:
+        spawn_center_x = width - 3
+        
+    if spawn_corner_y == 1:
+        spawn_center_y = 2
+    else:
+        spawn_center_y = height - 3
+    
+    # Store player spawn center for later use
+    room.player_spawn = (spawn_center_x, spawn_center_y)
+    
+    # === NEW: Carve 3x3 spawn area with ground support ===
+    # Place solid ground under spawn center
+    ground_y = spawn_center_y + 1
+    if room.is_in_bounds(spawn_center_x, ground_y):
+        room.set_tile(spawn_center_x, ground_y, TileCell(t="WALL"))
+    
+    # Carve 3x3 AIR spawn area (excluding ground tile)
+    for dx in range(-1, 2):
+        for dy in range(-1, 2):
+            carve_x = spawn_center_x + dx
+            carve_y = spawn_center_y + dy
+            # Skip ground tile and ensure we don't carve room boundaries
+            if (carve_x == spawn_center_x and carve_y == ground_y) or \
+               carve_x == 0 or carve_x == width - 1 or \
+               carve_y == 0 or carve_y == height - 1:
+                continue
+            if room.is_in_bounds(carve_x, carve_y):
+                room.set_tile(carve_x, carve_y, TileCell(t="AIR"))
+    
+    # === NEW: Create exclusion zone for spawn area ===
+    spawn_exclusion = set()
+    for dx in range(-1, 2):
+        for dy in range(-1, 2):
+            ex_x = spawn_center_x + dx
+            ex_y = spawn_center_y + dy
+            # Include ground tile in exclusion too
+            spawn_exclusion.add((ex_x, ex_y))
+    
+    # Initialize walker at spawn center instead of room center
+    walker_x = spawn_center_x
+    walker_y = spawn_center_y
     
     # Drunkard's Walk parameters
     max_steps = width * height // 2  # Carve ~50% of room
@@ -714,14 +566,34 @@ def generate_room_layout(config: GenerationConfig) -> RoomData:
     ]
     
     for step in range(max_steps):
-        # Carve a block centered on walker (not just single tile)
-        carve_corridor_block(
-            room,
-            walker_x,
-            walker_y,
-            carve_width,
-            carve_height
-        )
+        # === NEW: Check if carving would intersect spawn exclusion ===
+        # Calculate bounds of the block we're about to carve
+        half_width = carve_width // 2
+        half_height = carve_height // 2
+        start_x = walker_x - half_width
+        end_x = walker_x + half_width + (carve_width % 2)
+        start_y = walker_y - half_height
+        end_y = walker_y + half_height + (carve_height % 2)
+        
+        # Check if any tile in this block is in spawn exclusion
+        would_intersect_exclusion = False
+        for check_x in range(start_x, end_x):
+            for check_y in range(start_y, end_y):
+                if (check_x, check_y) in spawn_exclusion:
+                    would_intersect_exclusion = True
+                    break
+            if would_intersect_exclusion:
+                break
+        
+        # Only carve if we won't intersect spawn exclusion
+        if not would_intersect_exclusion:
+            carve_corridor_block(
+                room,
+                walker_x,
+                walker_y,
+                carve_width,
+                carve_height
+            )
         
         # Count carved tiles for stopping condition
         carved_tiles = len([t for t in room.grid.values() if t.t == "AIR"])
@@ -819,10 +691,8 @@ def generate_validated_room(
         if not place_doors(room, movement_attrs):
             continue
         
-        # Phase 3: Place PLATFORMS *SECOND*
-        # Now, verify_traversable (inside place_platforms) will use
-        # the *real* coordinates and can validate paths correctly.
-        num_platforms = place_platforms(room, config, movement_attrs)
+        # Phase 3: REMOVED - Platforms are no longer placed
+        # Corridors and spawn area provide sufficient traversability
         
         # Phase 4: Final validation
         if verify_traversable(room, movement_attrs):
