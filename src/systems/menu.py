@@ -212,8 +212,9 @@ class Menu:
                         # - Go back to title_screen()
                         # - Then reset to level 0 and recreate player/inventory/camera.
                         self.title_screen()
-                        self.game.level_index = 0
-                        self.game._load_level(self.game.level_index, initial=True)
+                        # After returning from title screen, reset to level 0 respecting current PCG setting
+                        initial_level = 0 if not self.game.use_procedural else 1
+                        self.game._load_level(initial_level, initial=True)
                         sx, sy = self.game.level.spawn
                         self.game.player = Player(sx, sy, cls=self.game.selected_class)
                         self.game.enemies = self.game.level.enemies
@@ -235,8 +236,9 @@ class Menu:
                             return
                         elif choice == "Main Menu":
                             self.title_screen()
-                            self.game.level_index = 0
-                            self.game._load_level(self.game.level_index, initial=True)
+                            # After returning from title screen, reset to level 0 respecting current PCG setting
+                            initial_level = 0 if not self.game.use_procedural else 1
+                            self.game._load_level(initial_level, initial=True)
                             sx, sy = self.game.level.spawn
                             self.game.player = Player(sx, sy, cls=self.game.selected_class)
                             self.game.enemies = self.game.level.enemies
@@ -291,8 +293,9 @@ class Menu:
                             # Go back to title menu, allow user to adjust options,
                             # then start fresh level 0 respecting user_wants_procedural.
                             self.title_screen()
-                            self.game.level_index = 0
-                            self.game._load_level(self.game.level_index, initial=True)
+                            # After returning from title screen, reset to level 0 respecting current PCG setting
+                            initial_level = 0 if not self.game.use_procedural else 1
+                            self.game._load_level(initial_level, initial=True)
                             sx, sy = self.game.level.spawn
                             self.game.player = Player(sx, sy, cls=self.game.selected_class)
                             self.game.enemies = self.game.level.enemies
@@ -341,7 +344,7 @@ class Menu:
                                 self.game.set_custom_seed(seed_value)
                                 input_active = False
                                 input_text = ""
-                                # Force a level reload to apply new seed
+                                # Force a level reload to apply new seed (only when explicitly setting a seed)
                                 self.game._load_level(self.game.current_level_number, initial=True)
                             except ValueError:
                                 # Handle invalid input (non-integer)
@@ -359,29 +362,16 @@ class Menu:
                             choice = options[idx]
                             if choice == "Toggle PCG":
                                 print(f"[DEBUG MENU] Toggle PCG selected")
-                                print(f"[DEBUG MENU] Before toggle: use_procedural={self.game.use_procedural}, level_index={self.game.level_index}, current_level_number={self.game.current_level_number}")
+                                print(f"[DEBUG MENU] Before toggle: use_procedural={self.game.use_procedural}")
                                 self.game.toggle_procedural_generation()
                                 print(f"[DEBUG MENU] After toggle: use_procedural={self.game.use_procedural}")
-                                
-                                # FIXED: Convert between 1-based (PCG) and 0-based (legacy) level numbers
-                                if self.game.use_procedural:
-                                    # Switching TO PCG: use current_level_number (1-based)
-                                    level_to_load = self.game.current_level_number
-                                else:
-                                    # Switching TO legacy: convert current_level_number (1-based) to level_index (0-based)
-                                    level_to_load = max(0, self.game.current_level_number - 1)
-                                    # Also update level_index to match
-                                    self.game.level_index = level_to_load
-                                
-                                print(f"[DEBUG MENU] Reloading level with level_to_load={level_to_load}")
-                                self.game._load_level(level_to_load, initial=True)
-                                print(f"[DEBUG MENU] After reload: level_index={self.game.level_index}, current_level_number={self.game.current_level_number}")
+                                print(f"[DEBUG MENU] PCG toggle will apply when starting a new run from the main menu.")
                             elif choice == "Set Custom Seed":
                                 input_active = True
                                 input_text = str(self.game.get_current_seed() or "") # Pre-fill with current seed
                             elif choice == "Generate Random Seed":
                                 self.game.generate_random_seed()
-                                # Force a level reload to apply new random seed
+                                # Force a level reload to apply new random seed (only when explicitly generating a new seed)
                                 self.game._load_level(self.game.current_level_number, initial=True)
                             elif choice == "Back":
                                 return
