@@ -403,8 +403,354 @@ def place_doors(room: RoomData, movement_attrs: MovementAttributes, entrance_doo
             doors_placed += 1
     
     return doors_placed > 0
+
+
+def get_spawn_quadrant(spawn_pos: Optional[Tuple[int, int]], room_size: Tuple[int, int]) -> str:
+    """
+    Determine which quadrant spawn position is in.
+    
+    Uses same quadrant boundaries as spawn generation.
+    """
+    if spawn_pos is None:
+        return "top-left"  # Default fallback
+    
+    x, y = spawn_pos
+    width, height = room_size
+    
+    # Use same quadrant boundaries as spawn generation (10x10 from corners)
+    if x <= 10 and y <= 10:
+        return "top-left"
+    elif x >= width - 10 and y <= 10:
+        return "top-right"
+    elif x <= 10 and y >= height - 10:
+        return "bottom-left"
+    else:
+        return "bottom-right"
+
+
+def get_available_quadrants(spawn_quadrant: str) -> List[str]:
+    """
+    Get list of available quadrants (excluding spawn quadrant).
+    """
+    all_quadrants = ["top-left", "top-right", "bottom-left", "bottom-right"]
+    available = [q for q in all_quadrants if q != spawn_quadrant]
+    random.shuffle(available)  # Random order for variety
+    return available
+
+
+def get_quadrant_bounds(quadrant: str, room_size: Tuple[int, int]) -> dict:
+    """
+    Get quadrant boundaries using same logic as spawn generation.
+    """
+    width, height = room_size
+    
+    if quadrant == "top-left":
+        return {
+            'min_x': 1, 'max_x': min(10, width - 3),
+            'min_y': 1, 'max_y': min(10, height - 3)
+        }
+    elif quadrant == "top-right":
+        return {
+            'min_x': max(width - 10, 2), 'max_x': width - 2,
+            'min_y': 1, 'max_y': min(10, height - 3)
+        }
+    elif quadrant == "bottom-left":
+        return {
+            'min_x': 1, 'max_x': min(10, width - 3),
+            'min_y': max(height - 10, 2), 'max_y': height - 2
+        }
+    else:  # bottom-right
+        return {
+            'min_x': max(width - 10, 2), 'max_x': width - 2,
+            'min_y': max(height - 10, 2), 'max_y': height - 2
+        }
+
+
+def place_entrance_at_spawn(room: RoomData, movement_attrs: MovementAttributes) -> Optional[Tuple[int, int]]:
+    """
+    Place entrance door at player spawn position.
+    
+    The entrance door uses the existing 3x3 spawn area and creates ground below.
+    """
+    if room.player_spawn is None:
+        return None
+    
+    spawn_x, spawn_y = room.player_spawn
+    
+    # Place entrance door at center of spawn area
+    door_pos = (spawn_x, spawn_y)
+    
+    # Create entrance door
+    from src.level.room_data import Door
+    entrance_door = Door(
+        door_id="A",  # First door is always entrance
+        position=door_pos,
+        door_type="entrance"
+    )
+    room.doors["A"] = entrance_door
+    
+    # Place door tile in grid (replaces center of spawn area)
+    room.grid[door_pos] = TileCell(tile_type=TileType.DOOR, flags={"PCG_DOOR"})
+    
+    # Ensure 3x1 ground below entrance door (same as exit door)
+    for dx in range(-1, 2):
+        ground_x = door_pos[0] + dx
+        ground_y = door_pos[1] + 1
+        if room.is_in_bounds(ground_x, ground_y):
+                    room.set_tile(ground_x, ground_y, TileCell(tile_type=TileType.WALL))
+    
+    return door_pos
+
+
+def find_valid_exit_position_in_quadrant(
+    room: RoomData, 
+    regions: List[Set[Tuple[int, int]]], 
+    quadrant: str,
+    spawn_pos: Optional[Tuple[int, int]]
+) -> Optional[Tuple[int, int]]:
+    """
+    Find valid door position in connected regions, preferring specified quadrant.
+    Falls back to any valid position if quadrant doesn't have valid positions.
+    Returns position farthest from spawn within valid region.
+    """
+    if spawn_pos is None:
+        return None
+        
+    bounds = get_quadrant_bounds(quadrant, room.size)
+    valid_positions = []
+    fallback_positions = []
+    
+    # Find all positions in connected regions
+    for region in regions:
+        for (x, y) in region:
+            # Check if we can carve 3x3 space + 3x1 ground below
+            if can_carve_door_space(room, x, y):
+                # Calculate distance from spawn
+                dist = abs(x - spawn_pos[0]) + abs(y - spawn_pos[1])
+                
+                # Check if position is in preferred quadrant
+                if (bounds['min_x'] <= x <= bounds['max_x'] and 
+                    bounds['min_y'] <= y <= bounds['max_y']):
+                    valid_positions.append((dist, x, y))
+                else:
+                    fallback_positions.append((dist, x, y))
+    
+    # Prefer positions in target quadrant, but fall back to any valid position
+    positions_to_use = valid_positions if valid_positions else fallback_positions
+    
+    if not positions_to_use:
+        return None
+    
+    # Return position farthest from spawn
+    positions_to_use.sort(reverse=True)
+    _, best_x, best_y = positions_to_use[0]
+    return (best_x, best_y)
+
+
+def can_carve_door_space(room: RoomData, center_x: int, center_y: int) -> bool:
+    """
+    Check if we can carve 3x3 AIR space + 3x1 ground below at position.
+    """
+    # Check 3x3 AIR space
+    for dx in range(-1, 2):
+        for dy in range(-1, 2):
+            check_x = center_x + dx
+            check_y = center_y + dy
+            
+            if not room.is_in_bounds(check_x, check_y):
+                return False
+            
+            # Skip if protected tile (except for spawn area)
+            existing_tile = room.get_tile(check_x, check_y)
+            if any(flag in existing_tile.flags for flag in ["SPAWN_PLATFORM", "DOOR_PLATFORM", "PROTECTED"]):
+                if "SPAWN_PLATFORM" not in existing_tile.flags:  # Allow carving in spawn area for entrance
+                    return False
+    
+    # Check 3x1 ground below
+    for dx in range(-1, 2):
+        ground_x = center_x + dx
+        ground_y = center_y + 1
+        
+        if not room.is_in_bounds(ground_x, ground_y):
+            return False
+        
+        ground_tile = room.get_tile(ground_x, ground_y)
+        # Ground should be solid or can be made solid
+        if ground_tile.tile_type not in [TileType.WALL, TileType.AIR]:
+            return False
     
     return True
+
+
+def carve_door_space_with_corridor(
+    room: RoomData, 
+    door_pos: Tuple[int, int], 
+    regions: List[Set[Tuple[int, int]]],
+    config: GenerationConfig
+) -> None:
+    """
+    Carve 3x3 AIR space + 3x1 ground below and connect to main regions.
+    """
+    center_x, center_y = door_pos
+    
+    # Carve 3x3 AIR space
+    for dx in range(-1, 2):
+        for dy in range(-1, 2):
+            carve_x = center_x + dx
+            carve_y = center_y + dy
+            if room.is_in_bounds(carve_x, carve_y):
+                existing_tile = room.get_tile(carve_x, carve_y)
+                # Skip protected tiles (except spawn area)
+                if not any(flag in existing_tile.flags for flag in ["SPAWN_PLATFORM", "DOOR_PLATFORM", "PROTECTED"]):
+                    room.set_tile(carve_x, carve_y, TileCell(tile_type=TileType.AIR))
+    
+    # Ensure 3x1 ground below
+    for dx in range(-1, 2):
+        ground_x = center_x + dx
+        ground_y = center_y + 1
+        if room.is_in_bounds(ground_x, ground_y):
+            room.set_tile(ground_x, ground_y, TileCell(tile_type=TileType.WALL))
+    
+    # Connect door to main regions if needed
+    # Find if door position is already in a connected region
+    door_in_region = False
+    for region in regions:
+        if (center_x, center_y) in region:
+            door_in_region = True
+            break
+    
+    # If not in main region, carve corridor to nearest region
+    if not door_in_region and regions:
+        # Find nearest point in any connected region
+        min_dist = float('inf')
+        nearest_point = None
+        
+        for region in regions:
+            for (rx, ry) in region:
+                dist = abs(center_x - rx) + abs(center_y - ry)
+                if dist < min_dist:
+                    min_dist = dist
+                    nearest_point = (rx, ry)
+        
+        if nearest_point:
+            # Carve corridor from door to nearest region
+            corridor_points = bresenham_line(center_x, center_y, nearest_point[0], nearest_point[1])
+            carve_width = max(config.min_corridor_width, config.movement_attributes.player_width)
+            carve_height = max(config.movement_attributes.min_corridor_height, config.movement_attributes.player_height)
+            
+            for (cx, cy) in corridor_points:
+                carve_corridor_block(
+                    room,
+                    center_x=cx,
+                    center_y=cy,
+                    width=carve_width,
+                    height=carve_height,
+                    force_carve=True  # Override protection for connection
+                )
+
+
+def randomly_assign_exit_quadrants(available_quadrants: List[str], exit_doors: int) -> List[str]:
+    """
+    Randomly assign exit doors to available quadrants.
+    """
+    if exit_doors > len(available_quadrants):
+        return available_quadrants[:len(available_quadrants)]
+    
+    return available_quadrants[:exit_doors]
+
+
+def place_doors_with_spawn_entrance(
+    room: RoomData, 
+    movement_attrs: MovementAttributes, 
+    regions: List[Set[Tuple[int, int]]],
+    config: GenerationConfig,
+    exit_doors: int = 1
+) -> bool:
+    """
+    Place doors with entrance at spawn and exits in other quadrants.
+    """
+    print(f"DEBUG: place_doors_with_spawn_entrance called with exit_doors={exit_doors}")
+    print(f"DEBUG: Room spawn: {room.player_spawn}, regions: {len(regions)}")
+    
+    # 1. Place entrance door at player spawn area
+    entrance_pos = place_entrance_at_spawn(room, movement_attrs)
+    if not entrance_pos:
+        print(f"DEBUG: Failed to place entrance door")
+        return False
+    
+    # 2. Get spawn quadrant to exclude for exit doors
+    if room.player_spawn is None:
+        print(f"DEBUG: No player spawn found")
+        return False
+        
+    spawn_quadrant = get_spawn_quadrant(room.player_spawn, room.size)
+    print(f"DEBUG: Spawn quadrant: {spawn_quadrant}")
+    
+    # 3. Get available quadrants for exit doors (exclude spawn quadrant)
+    available_quadrants = get_available_quadrants(spawn_quadrant)
+    print(f"DEBUG: Available quadrants: {available_quadrants}")
+    
+    # 4. Randomly assign exit doors to available quadrants
+    exit_quadrants = randomly_assign_exit_quadrants(available_quadrants, exit_doors)
+    print(f"DEBUG: Exit quadrants: {exit_quadrants}")
+    
+    # 5. Place exit doors in assigned quadrants
+    door_id_counter = 66  # Start with 'B' (after entrance 'A')
+    for quadrant in exit_quadrants:
+        print(f"DEBUG: Processing quadrant: {quadrant}")
+        if room.player_spawn is None:
+            return False
+        
+        exit_pos = find_valid_exit_position_in_quadrant(room, regions, quadrant, room.player_spawn)
+        print(f"DEBUG: Exit position for {quadrant}: {exit_pos}")
+        if exit_pos:
+            # Carve door space and connect to regions
+            carve_door_space_with_corridor(room, exit_pos, regions, config)
+            
+            # Place exit door
+            from src.level.room_data import Door
+            exit_door = Door(
+                door_id=chr(door_id_counter),
+                position=exit_pos,
+                door_type="exit"
+            )
+            room.doors[chr(door_id_counter)] = exit_door
+            
+            # Place door tile in grid
+            room.grid[exit_pos] = TileCell(tile_type=TileType.DOOR, flags={"PCG_DOOR"})
+            
+            # Ensure 3x1 ground below exit door (same as entrance door)
+            for dx in range(-1, 2):
+                ground_x = exit_pos[0] + dx
+                ground_y = exit_pos[1] + 1
+                if room.is_in_bounds(ground_x, ground_y):
+                    room.set_tile(ground_x, ground_y, TileCell(tile_type=TileType.WALL))
+            
+            # Create exclusion zone for ground below door
+            create_exclusion_zone(
+                room_data=room,
+                center_x=exit_pos[0],
+                center_y=exit_pos[1] + 1,  # Below door
+                width=3,
+                height=1,
+                exclusion_type="DOOR_PLATFORM"
+            )
+            
+            door_id_counter += 1
+        else:
+            # Couldn't place exit door in this quadrant
+            print(f"DEBUG: Failed to place exit door in quadrant {quadrant}")
+            continue
+    
+    # Verify we have at least entrance + 1 exit
+    print(f"DEBUG: Total doors placed: {len(room.doors)}")
+    if len(room.doors) < 2:
+        print(f"DEBUG: Not enough doors placed (need at least 2)")
+        return False
+    
+    print(f"DEBUG: Door placement successful!")
+    return True
+
 
 def carve_corridor_block(
     room_data: RoomData,
@@ -664,8 +1010,9 @@ def generate_room_layout(config: GenerationConfig) -> RoomData:
         spawn_center_x += adjust_x
         spawn_center_y += adjust_y
     
-    # Store player spawn center for later use
-    room.player_spawn = (spawn_center_x, spawn_center_y)
+    # Store player spawn at bottom center of 3x3 spawn area (row 3, col 2 relative to area)
+    # Bottom center is offset (+1, +1) from top-left of 3x3 area
+    room.player_spawn = (spawn_center_x + 1, spawn_center_y + 1)
     
     # === NEW: Carve 3x3 spawn area (AIR space above ground) ===
     # Carve a 3x3 block of AIR tiles centered around spawn_center
@@ -743,26 +1090,7 @@ def generate_room_layout(config: GenerationConfig) -> RoomData:
         walker_x = max(margin, min(width - margin - 1, walker_x + dx))
         walker_y = max(margin, min(height - margin - 1, walker_y + dy))
     
-    # --- ADD THIS SECTION ---
-    # Guarantee valid, flat ground for doors at a reasonable height
-    door_ground_y = height - 5  # e.g., 5 tiles from bottom
-    player_height = config.movement_attributes.player_height
-    if door_ground_y > player_height: # Ensure it's not too high
-        # Carve a 3-wide platform for the entrance
-        for x_offset in range(3):
-            room.set_tile(1 + x_offset, door_ground_y, TileCell(tile_type=TileType.WALL))
-            # Carve clearance above it
-            for y_offset in range(1, player_height + 2):
-                 room.set_tile(1 + x_offset, door_ground_y - y_offset, TileCell(tile_type=TileType.AIR))
 
-        # Carve a 3-wide platform for the exit
-        for x_offset in range(3):
-            room.set_tile(width - 4 + x_offset, door_ground_y, TileCell(tile_type=TileType.WALL))
-            # Carve clearance above it
-            for y_offset in range(1, player_height + 2):
-                 room.set_tile(width - 4 + x_offset, door_ground_y - y_offset, TileCell(tile_type=TileType.AIR))
-
-    # --- END ADDED SECTION ---
 
     # PCG doors will be placed by place_doors() function
     # No need to set entrance/exit hints anymore
@@ -790,55 +1118,49 @@ def carve_path(room: RoomData, start_pos: Tuple[int, int], end_pos: Tuple[int, i
 def generate_validated_room(
     config: GenerationConfig,
     movement_attrs: MovementAttributes,
-    depth_from_start: int = 0
+    depth_from_start: int = 0,
+    exit_doors: int = 1
 ) -> RoomData:
     """Generate validated room with full connectivity guarantee."""
     
+    print(f"DEBUG: Starting room generation with {config.max_room_generation_attempts} max attempts")
     for attempt in range(config.max_room_generation_attempts):
+        print(f"DEBUG: Attempt {attempt + 1}/{config.max_room_generation_attempts}")
         # Phase 1: Generate basic layout
-
+        print(f"DEBUG: Phase 1: Generating room layout...")
         room = generate_room_layout(config)
+        print(f"DEBUG: Room layout generated, size: {room.size}")
 
         
         # Phase 1.5: Full connectivity check and repair
-
+        print(f"DEBUG: Phase 1.5: Checking connectivity...")
         regions = flood_fill_find_regions(room)
+        print(f"DEBUG: Found {len(regions)} regions")
         if len(regions) > 1:
             # Multiple disconnected regions - try to reconnect
-
+            print(f"DEBUG: Multiple regions found, attempting reconnection...")
             if not reconnect_isolated_regions(room, config):  #  Pass config
-
+                print(f"DEBUG: Reconnection failed, trying new room...")
                 continue  # Reconnection failed, try new room
             #  REMOVED redundant check_connectivity_basic call
             # If reconnection succeeded, we're guaranteed to be connected!
         
-
+        print(f"DEBUG: Connectivity check passed")
         
         # --- THIS IS THE NEW ORDER ---
 
-        # Phase 2: Place PCG DOORS *FIRST*
-        # This establishes the real door positions using the PCG system
+        # Phase 2: Place doors with entrance at spawn and exits in other quadrants
         # For linear levels, we use 1 entrance + 1 exit door
-        if not place_doors(room, movement_attrs, entrance_doors=1, exit_doors=1):
+        # For branching levels, exit_doors parameter will be 1-2
+        print(f"DEBUG: Phase 2: Placing doors with {exit_doors} exit doors...")
+        
+        if not place_doors_with_spawn_entrance(room, movement_attrs, regions, config, exit_doors=exit_doors):
+            print(f"DEBUG: Door placement failed, trying new room...")
             continue  # Door placement failed, try new room
         
         # Quick sanity check - verify doors were placed
         if not room.doors:
             continue  # No doors placed, regenerate
-
-        
-        # Phase 2.5: Create exclusion zones for door ground platforms
-        # This ensures doors always have solid ground to stand on
-        # Create exclusion zones around PCG doors
-        for door in room.doors.values():
-            create_exclusion_zone(
-                room_data=room,
-                center_x=door.position[0],
-                center_y=door.position[1] + 1,  # Below door
-                width=3,
-                height=1,
-                exclusion_type="DOOR_PLATFORM"
-            )
         
 
         
@@ -846,13 +1168,17 @@ def generate_validated_room(
         # Corridors and spawn area provide sufficient traversability
         
         # Phase 4: Final validation
+        print(f"DEBUG: Phase 4: Final validation...")
         if verify_traversable(room, movement_attrs):
+            print(f"DEBUG: Traversability verification passed!")
             # Phase 5: Configure difficulty
             configure_room_difficulty(room, depth_from_start, config)
             
 
             # Phase 6: Spawn areas disabled for PCG step flow; return validated room as-is
             return room
+        else:
+            print(f"DEBUG: Traversability verification failed, trying new room...")
     
     # Fallback
     fallback = generate_fallback_room(config)

@@ -312,14 +312,19 @@ def generate_complete_level(
         if depth == -1:
             depth = 0  # Fallback
         
+        # Determine exit door count from graph structure
+        neighbor_ids = graph.get(room_id, [])
+        exit_doors_count = len(neighbor_ids)  # Number of exits from this room
+        
         # Generate a new seed for each room
         room_config.seed = level_rng.randint(0, 2**32 - 1)
         
-        # Generate room
+        # Generate room with appropriate exit door count
         room = generate_validated_room(
             room_config,
             movement_attrs,
-            depth_from_start=depth
+            depth_from_start=depth,
+            exit_doors=exit_doors_count
         )
         
 
