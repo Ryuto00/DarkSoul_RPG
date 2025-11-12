@@ -111,6 +111,9 @@ class Game:
         self.space_double_tap_window = 20  # frames for double-tap detection
         self._prev_space_pressed = False
 
+        # Level state for static rooms
+        self.level_index = 0
+        
         # Run title; legacy flow may still configure basic options
         try:
             self.menu.title_screen()
@@ -119,12 +122,12 @@ class Game:
             import traceback
             traceback.print_exc()
         
-        # Level state for static rooms
-        self.level_index = 0
-        
-        # Initialize first static level
+        # Initialize first level
         try:
-            self._load_level(level_number=1, initial=True)
+            # For static mode (PCG OFF), use 0-based index to start at Room 1 (ROOMS[0])
+            # For procedural mode (PCG ON), use 1-based level_number
+            initial_level = 0 if not self.use_procedural else 1
+            self._load_level(level_number=initial_level, initial=True)
         except Exception as e:
             print(f"[ERROR] Exception in _load_level: {e}")
             import traceback
@@ -143,7 +146,10 @@ class Game:
 
     def toggle_procedural_generation(self):
         """Toggles procedural generation on/off."""
+        print(f"[DEBUG] Toggling PCG: {self.use_procedural} -> {not self.use_procedural}")
+        print(f"[DEBUG] Current state: level_index={self.level_index}, current_level_number={self.current_level_number}")
         self.use_procedural = not self.use_procedural
+        print(f"[DEBUG] After toggle: use_procedural={self.use_procedural}")
 
     def set_custom_seed(self, seed: int):
         """Sets a custom seed for procedural generation."""
@@ -161,13 +167,23 @@ class Game:
 
     def restart_run(self):
         """
-        Restart from the first static room.
+        Restart from the current level (preserving level progress).
         """
-        # Reset to first level index
-        self.level_index = 0
+        print(f"[DEBUG] restart_run called!")
+        print(f"[DEBUG] Before restart: level_index={self.level_index}, current_level_number={self.current_level_number}, use_procedural={self.use_procedural}")
+        
+        # FIXED: Preserve current level instead of resetting to level 0
+        if self.use_procedural:
+            # PCG mode: restart from current level number (1-based)
+            level_to_restart = self.current_level_number
+        else:
+            # Legacy mode: restart from current level index (0-based)
+            level_to_restart = self.level_index
+        
+        print(f"[DEBUG] Restarting from level: {level_to_restart}")
 
-        # Load level 0
-        self._load_level(self.level_index, initial=True)
+        # Load the current level
+        self._load_level(level_to_restart, initial=True)
 
         # Recreate player at the new spawn
         sx, sy = self.level.spawn
@@ -186,6 +202,8 @@ class Game:
 
         # Reset camera
         self.camera = Camera()
+        
+        print(f"[DEBUG] After restart: level_index={self.level_index}, current_level_number={self.current_level_number}")
 
     def _load_level(self, level_number: Optional[int] = None, room_id: Optional[str] = None, initial: bool = False):
         """
@@ -196,6 +214,9 @@ class Game:
             room_id: Which room in current level to load (for room transitions)
             initial: Is this the first load?
         """
+        print(f"[DEBUG] _load_level called: level_number={level_number}, room_id={room_id}, initial={initial}, use_procedural={self.use_procedural}")
+        print(f"[DEBUG] Current state: level_index={self.level_index}, current_level_number={self.current_level_number}")
+        
         if not self.use_procedural:
             # LEGACY: Use old static room system
             self._load_static_level(level_number or 0, initial)
@@ -263,10 +284,14 @@ class Game:
 
     def _load_static_level(self, index: int, initial: bool = False):
         """Legacy static room loading (for backwards compatibility)."""
+        print(f"[DEBUG] _load_static_level called: index={index}, initial={initial}")
         self.level_index = index
         room_index = index % ROOM_COUNT
         
+        print(f"[DEBUG] Loading static room: room_index={room_index} ( ROOMS[{room_index}] = Room {room_index + 1} )")
+        
         try:
+            # Use room_index (not index) to pass the intended room number to Level constructor
             lvl = Level(room_index)
         except Exception as e:
             print(f"[CRITICAL ERROR] Failed to load static room {room_index}: {e}")
@@ -278,6 +303,8 @@ class Game:
         if not initial:
             hitboxes.clear()
             floating.clear()
+            
+        print(f"[DEBUG] Static level loaded: level_index={self.level_index}")
 
     def switch_room(self, delta: Optional[int] = None, target_room_id: Optional[str] = None):
         """

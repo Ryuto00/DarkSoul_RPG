@@ -188,6 +188,8 @@ class Menu:
                     # Direct hotkeys for convenience (preserve legacy behavior)
                     if ev.key in (pygame.K_r, pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
                         # Restart run via centralized logic so behavior is consistent.
+                        print(f"[DEBUG GAME_OVER] Restart selected via hotkey")
+                        print(f"[DEBUG GAME_OVER] Before restart: level_index={self.game.level_index}, current_level_number={self.game.current_level_number}")
                         self.game.restart_run()
                         return
                     elif ev.key in (pygame.K_q, pygame.K_ESCAPE):
@@ -200,6 +202,8 @@ class Menu:
                         idx = (idx + 1) % len(options)
                     elif ev.key in (pygame.K_1,):
                         # Hotkey: 1 => Restart
+                        print(f"[DEBUG GAME_OVER] Restart selected via hotkey 1")
+                        print(f"[DEBUG GAME_OVER] Before restart: level_index={self.game.level_index}, current_level_number={self.game.current_level_number}")
                         self.game.restart_run()
                         return
                     elif ev.key in (pygame.K_2, pygame.K_e):
@@ -225,6 +229,8 @@ class Menu:
                         # Handle based on selected menu entry
                         choice = options[idx]
                         if choice == "Restart":
+                            print(f"[DEBUG GAME_OVER] Restart selected via menu")
+                            print(f"[DEBUG GAME_OVER] Before restart: level_index={self.game.level_index}, current_level_number={self.game.current_level_number}")
                             self.game.restart_run()
                             return
                         elif choice == "Main Menu":
@@ -352,9 +358,24 @@ class Menu:
                         elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
                             choice = options[idx]
                             if choice == "Toggle PCG":
+                                print(f"[DEBUG MENU] Toggle PCG selected")
+                                print(f"[DEBUG MENU] Before toggle: use_procedural={self.game.use_procedural}, level_index={self.game.level_index}, current_level_number={self.game.current_level_number}")
                                 self.game.toggle_procedural_generation()
-                                # Force a level reload to apply PCG state
-                                self.game._load_level(self.game.current_level_number, initial=True)
+                                print(f"[DEBUG MENU] After toggle: use_procedural={self.game.use_procedural}")
+                                
+                                # FIXED: Convert between 1-based (PCG) and 0-based (legacy) level numbers
+                                if self.game.use_procedural:
+                                    # Switching TO PCG: use current_level_number (1-based)
+                                    level_to_load = self.game.current_level_number
+                                else:
+                                    # Switching TO legacy: convert current_level_number (1-based) to level_index (0-based)
+                                    level_to_load = max(0, self.game.current_level_number - 1)
+                                    # Also update level_index to match
+                                    self.game.level_index = level_to_load
+                                
+                                print(f"[DEBUG MENU] Reloading level with level_to_load={level_to_load}")
+                                self.game._load_level(level_to_load, initial=True)
+                                print(f"[DEBUG MENU] After reload: level_index={self.game.level_index}, current_level_number={self.game.current_level_number}")
                             elif choice == "Set Custom Seed":
                                 input_active = True
                                 input_text = str(self.game.get_current_seed() or "") # Pre-fill with current seed
@@ -396,92 +417,7 @@ class Menu:
             draw_text(self.screen, "Use Up/Down, Enter to select, Esc to return", (WIDTH//2 - 210, HEIGHT-64), (160,160,180), size=16)
             pygame.display.flip()
 
-    def procedural_generation_menu(self):
-        """Blocking menu for procedural generation options."""
-        options = ["Toggle PCG", "Set Custom Seed", "Generate Random Seed", "Back"]
-        idx = 0
-        input_text = ""
-        input_active = False
-
-        while True:
-            self.clock.tick(FPS)
-            for ev in pygame.event.get():
-                if ev.type == pygame.QUIT:
-                    pygame.quit(); sys.exit()
-                elif ev.type == pygame.KEYDOWN:
-                    if ev.key == pygame.K_ESCAPE:
-                        if input_active:
-                            input_active = False
-                            input_text = ""
-                        else:
-                            return
-                    elif input_active:
-                        if ev.key == pygame.K_RETURN:
-                            try:
-                                seed_value = int(input_text)
-                                self.game.set_custom_seed(seed_value)
-                                input_active = False
-                                input_text = ""
-                                # Force a level reload to apply new seed
-                                self.game._load_level(self.game.current_level_number, initial=True)
-                            except ValueError:
-                                # Handle invalid input (non-integer)
-                                input_text = "Invalid!"
-                        elif ev.key == pygame.K_BACKSPACE:
-                            input_text = input_text[:-1]
-                        else:
-                            input_text += ev.unicode
-                    else: # Menu navigation
-                        if ev.key in (pygame.K_UP, pygame.K_w):
-                            idx = (idx - 1) % len(options)
-                        elif ev.key in (pygame.K_DOWN, pygame.K_s):
-                            idx = (idx + 1) % len(options)
-                        elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
-                            choice = options[idx]
-                            if choice == "Toggle PCG":
-                                self.game.toggle_procedural_generation()
-                                # Force a level reload to apply PCG state
-                                self.game._load_level(self.game.current_level_number, initial=True)
-                            elif choice == "Set Custom Seed":
-                                input_active = True
-                                input_text = str(self.game.get_current_seed() or "") # Pre-fill with current seed
-                            elif choice == "Generate Random Seed":
-                                self.game.generate_random_seed()
-                                # Force a level reload to apply new random seed
-                                self.game._load_level(self.game.current_level_number, initial=True)
-                            elif choice == "Back":
-                                return
-
-            # Draw menu
-            self.screen.fill((8, 8, 12))
-            draw_text(self.screen, "PROCEDURAL GENERATION", (WIDTH//2 - 200, 60), (255,220,140), size=40, bold=True)
-
-            # Display current PCG state and seed
-            pcg_status = "ON" if self.game.use_procedural else "OFF"
-            current_seed = self.game.get_current_seed()
-            seed_display = f"Current Seed: {current_seed if current_seed is not None else 'Random'}"
-            draw_text(self.screen, f"PCG: {pcg_status}", (WIDTH//2 - 160, 140), (200,200,220), size=22)
-            draw_text(self.screen, seed_display, (WIDTH//2 - 160, 170), (200,200,220), size=22)
-
-
-            for i, opt in enumerate(options):
-                y = 240 + i*52
-                col = (255,220,140) if i == idx else (200,200,200)
-                display_text = opt
-                if opt == "Toggle PCG":
-                    display_text = f"Toggle PCG ({pcg_status})"
-                draw_text(self.screen, display_text, (WIDTH//2 - 160, y), col, size=28)
-
-            if input_active:
-                input_rect = pygame.Rect(WIDTH//2 - 150, 300 + options.index("Set Custom Seed")*52, 300, 40)
-                pygame.draw.rect(self.screen, (50,50,70), input_rect)
-                pygame.draw.rect(self.screen, (200,200,220), input_rect, 2)
-                draw_text(self.screen, input_text, (input_rect.x + 10, input_rect.y + 10), (255,255,255), size=20)
-                draw_text(self.screen, "Enter seed (integer)", (WIDTH//2 - 150, input_rect.y - 30), (180,180,200), size=16)
-
-
-            draw_text(self.screen, "Use Up/Down, Enter to select, Esc to return", (WIDTH//2 - 210, HEIGHT-64), (160,160,180), size=16)
-            pygame.display.flip()
+    # Remove duplicate method - keeping the first one above
 
     def generation_options_menu(self):
         """

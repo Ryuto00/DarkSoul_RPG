@@ -207,6 +207,7 @@ class Level:
         """
         # Clamp index and get ASCII room definition
         self.index = index % len(ROOMS)
+        # When index is 0, ensure we load ROOMS[0] (Room 1)
         raw = ROOMS[self.index]
 
         # Parse ASCII as legacy
