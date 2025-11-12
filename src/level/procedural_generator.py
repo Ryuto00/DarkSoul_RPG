@@ -561,34 +561,24 @@ def generate_room_layout(config: GenerationConfig) -> RoomData:
     ]
     
     for step in range(max_steps):
-        # === NEW: Check if carving would intersect spawn exclusion ===
-        # Calculate bounds of the block we're about to carve
+        # === NEW: Prevent carving into spawn exclusion by clipping the block ===
+        # We compute the intended carve block, then skip only the cells that
+        # touch the protected spawn_exclusion area, instead of skipping the
+        # entire step. This keeps a hard boundary but lets corridors pass nearby.
         half_width = carve_width // 2
         half_height = carve_height // 2
         start_x = walker_x - half_width
         end_x = walker_x + half_width + (carve_width % 2)
         start_y = walker_y - half_height
         end_y = walker_y + half_height + (carve_height % 2)
-        
-        # Check if any tile in this block is in spawn exclusion
-        would_intersect_exclusion = False
-        for check_x in range(start_x, end_x):
-            for check_y in range(start_y, end_y):
-                if (check_x, check_y) in spawn_exclusion:
-                    would_intersect_exclusion = True
-                    break
-            if would_intersect_exclusion:
-                break
-        
-        # Only carve if we won't intersect spawn exclusion
-        if not would_intersect_exclusion:
-            carve_corridor_block(
-                room,
-                walker_x,
-                walker_y,
-                carve_width,
-                carve_height
-            )
+
+        # Carve corridor block, but skip any coordinates inside spawn_exclusion.
+        for carve_x in range(start_x, end_x):
+            for carve_y in range(start_y, end_y):
+                if (carve_x, carve_y) in spawn_exclusion:
+                    continue
+                if room.is_in_bounds(carve_x, carve_y):
+                    room.set_tile(carve_x, carve_y, TileCell(t="AIR"))
         
         # Count carved tiles for stopping condition
         carved_tiles = len([t for t in room.grid.values() if t.t == "AIR"])
@@ -694,15 +684,13 @@ def generate_validated_room(
             # Phase 5: Configure difficulty
             configure_room_difficulty(room, depth_from_start, config)
             
-            # Phase 6: Place spawn areas
-            num_spawn_areas = place_spawn_areas(room, config)
-            
+            # Phase 6: Spawn areas disabled for PCG step flow; return validated room as-is
             return room
     
     # Fallback
     fallback = generate_fallback_room(config)
     configure_room_difficulty(fallback, depth_from_start, config)
-    place_spawn_areas(fallback, config)
+    # Spawn areas disabled for fallback as well
     return fallback
 
 

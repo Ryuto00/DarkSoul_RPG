@@ -68,28 +68,36 @@ def check_physics_reach(start_node: Tuple[int, int], end_node: Tuple[int, int], 
 def verify_traversable(room_data: RoomData, movement_attrs: MovementAttributes) -> bool:
     """
     Verifies that the room is traversable from entrance to exit.
+
+    Adjusted for current PCG:
+    - No assumptions about spawn areas; only doors and walkable ground matter.
+    - Uses MovementAttributes (player size / jump) and carved tiles only.
     """
     print(f"[TRAVERSAL DEBUG] Verifying traversability for room size {room_data.size}")
     print(f"[TRAVERSAL DEBUG] Entrance: {room_data.entrance_coords}, Exit: {room_data.exit_coords}")
     print(f"[TRAVERSAL DEBUG] Movement Attributes: max_jump_height={movement_attrs.max_jump_height}, max_jump_distance={movement_attrs.max_jump_distance}, player_height={movement_attrs.player_height}")
 
-    all_ground_nodes = find_valid_ground_locations(
-        room_data, 
-        movement_attrs.player_width, 
-        movement_attrs.player_height
-    )
-    print(f"[TRAVERSAL DEBUG] Found {len(all_ground_nodes)} valid ground locations.")
-    
+    # Require valid entrance/exit; PCG promises to set these via place_doors
     if not room_data.entrance_coords or not room_data.exit_coords:
         print("[TRAVERSAL DEBUG] Entrance or Exit coords not set.")
         return False
 
+    # Compute all valid ground nodes for current player size
+    all_ground_nodes = find_valid_ground_locations(
+        room_data,
+        movement_attrs.player_width,
+        movement_attrs.player_height
+    )
+    print(f"[TRAVERSAL DEBUG] Found {len(all_ground_nodes)} valid ground locations.")
+
+    # Ground nodes directly under the door tiles (where player stands)
     start_node = (room_data.entrance_coords[0], room_data.entrance_coords[1] + 1)
     end_node = (room_data.exit_coords[0], room_data.exit_coords[1] + 1)
 
     print(f"[TRAVERSAL DEBUG] Start Node (ground below entrance): {start_node}")
     print(f"[TRAVERSAL DEBUG] End Node (ground below exit): {end_node}")
 
+    # If either door does not sit above valid ground, this layout is invalid
     if start_node not in all_ground_nodes:
         print(f"[TRAVERSAL DEBUG] Start node {start_node} not in valid ground locations.")
         return False
