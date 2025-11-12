@@ -69,26 +69,6 @@ class Game:
         self.user_seed: Optional[int] = None # Stores user-set seed, None for random
         self.current_active_seed: Optional[int] = None # The seed actually used for current level
 
-    def toggle_procedural_generation(self):
-        """Toggles procedural generation on/off."""
-        self.use_procedural = not self.use_procedural
-        print(f"[PCG] Procedural generation: {'ON' if self.use_procedural else 'OFF'}")
-
-    def set_custom_seed(self, seed: int):
-        """Sets a custom seed for procedural generation."""
-        self.user_seed = seed
-        print(f"[PCG] Custom seed set to: {self.user_seed}")
-
-    def generate_random_seed(self):
-        """Clears the custom seed, allowing random generation."""
-        self.user_seed = None
-        print("[PCG] Random seed will be used for next generation.")
-
-    def get_current_seed(self) -> Optional[int]:
-        """Returns the currently active seed (user-set or the one used for current level)."""
-        return self.user_seed if self.user_seed is not None else self.current_active_seed
-
-        
         # Track current level
         self.current_level_data: Optional[LevelData] = None
         self.current_level_number = 1
@@ -126,45 +106,56 @@ class Game:
         self.mouse_grid_pos = None
         self.mouse_world_pos = None
 
-
         # Double spacebar detection for no-clip toggle
         self.last_space_time = 0
         self.space_double_tap_window = 20  # frames for double-tap detection
         self._prev_space_pressed = False
 
         # Run title; legacy flow may still configure basic options
-        self.menu.title_screen()
+        try:
+            self.menu.title_screen()
+        except Exception as e:
+            print(f"[ERROR] Exception in title_screen: {e}")
+            import traceback
+            traceback.print_exc()
         
         # Level state for static rooms
         self.level_index = 0
         
         # Initialize first static level
-        self._load_level(level_number=1, initial=True)
+        try:
+            self._load_level(level_number=1, initial=True)
+        except Exception as e:
+            print(f"[ERROR] Exception in _load_level: {e}")
+            import traceback
+            traceback.print_exc()
+            return
 
         # create player with chosen class
         sx, sy = self.level.spawn
-        print(f"[SPAWN DEBUG] Spawning player at ({sx}, {sy})")
-        
-        # Debug: Log spawn tile information
-        if hasattr(self.level, 'grid') and self.level.grid:
-            spawn_grid_x = sx // 24  # TILE size
-            spawn_grid_y = sy // 24
-            print(f"[SPAWN DEBUG] Spawn grid position: ({spawn_grid_x}, {spawn_grid_y})")
-            print(f"[SPAWN DEBUG] Grid dimensions: {len(self.level.grid)}x{len(self.level.grid[0]) if self.level.grid else 0}")
-            
-            if (0 <= spawn_grid_y < len(self.level.grid) and 0 <= spawn_grid_x < len(self.level.grid[0])):
-                spawn_tile = self.level.grid[spawn_grid_y][spawn_grid_x]
-                print(f"[SPAWN DEBUG] Spawn tile at ({spawn_grid_x}, {spawn_grid_y}) = {spawn_tile} (0=air, 1=wall)")
-
         self.player = Player(sx, sy, cls=self.selected_class)
-        print(f"[SPAWN DEBUG] Player rect after init: {self.player.rect}")
-        print(f"[SPAWN DEBUG] Player velocity after init: vx={self.player.vx}, vy={self.player.vy}")
         self.enemies = self.level.enemies
 
         # Inventory & shop
         self.inventory = Inventory(self)
         self.inventory._refresh_inventory_defaults()
         self.shop = Shop(self)
+
+    def toggle_procedural_generation(self):
+        """Toggles procedural generation on/off."""
+        self.use_procedural = not self.use_procedural
+
+    def set_custom_seed(self, seed: int):
+        """Sets a custom seed for procedural generation."""
+        self.user_seed = seed
+
+    def generate_random_seed(self):
+        """Clears the custom seed, allowing random generation."""
+        self.user_seed = None
+
+    def get_current_seed(self) -> Optional[int]:
+        """Returns the currently active seed (user-set or the one used for current level)."""
+        return self.user_seed if self.user_seed is not None else self.current_active_seed
 
     # === Level Management (static rooms only) ===
 
@@ -196,7 +187,7 @@ class Game:
         # Reset camera
         self.camera = Camera()
 
-    def _load_level(self, level_number: int = None, room_id: str = None, initial: bool = False):
+    def _load_level(self, level_number: Optional[int] = None, room_id: Optional[str] = None, initial: bool = False):
         """
         Load a level - either generate new procedural level or load specific room.
         
@@ -214,18 +205,15 @@ class Game:
         
         # Generate new level if needed (first load or new level number requested)
         if self.current_level_data is None or (level_number is not None and level_number != self.current_level_number):
-            print(f"[INFO] Generating new procedural level {level_number}...")
             
             # Determine seed for reproducible levels
             if self.user_seed is not None:
                 level_seed = self.user_seed
-                print(f"[PCG] Using user-defined seed: {level_seed}")
             else:
                 # If no user seed, generate a new random one for this level
                 # or use a deterministic one based on level_number if that's desired behavior
                 import random
                 level_seed = random.randint(0, 1000000) # Generate a truly random seed
-                print(f"[PCG] Using random seed: {level_seed}")
             
             self.current_active_seed = level_seed # Store the seed actually used
             
@@ -240,16 +228,14 @@ class Game:
             self.current_level_number = level_number
             
             # Start at first room
-            room_id = self.current_level_data.start_room_id
+            room_id = room_id or self.current_level_data.start_room_id
             
-            print(f"[INFO] Generated level with {len(self.current_level_data.rooms)} rooms")
-            print(f"[INFO] Start: {self.current_level_data.start_room_id}, Goal: {self.current_level_data.goal_room_id}")
         
         # Load specific room
         if room_id is None:
-            room_id = self.current_level_data.start_room_id
+            room_id = self.current_level_data.start_room_id if self.current_level_data else "room_0"
         
-        room_data = self.current_level_data.get_room(room_id)
+        room_data = self.current_level_data.get_room(room_id) if self.current_level_data else None
         
         if room_data is None:
             print(f"[ERROR] Room {room_id} not found in level!")
@@ -262,7 +248,6 @@ class Game:
                 level_data=self.current_level_data,
                 room_id=room_id
             )
-            print(f"[INFO] Loaded procedural room: {room_id} (difficulty {room_data.difficulty_rating})")
         except Exception as e:
             print(f"[CRITICAL ERROR] Failed to load room {room_id}: {e}")
             import traceback
@@ -283,7 +268,6 @@ class Game:
         
         try:
             lvl = Level(room_index)
-            print(f"[INFO] Loaded static room {room_index}")
         except Exception as e:
             print(f"[CRITICAL ERROR] Failed to load static room {room_index}: {e}")
             return
@@ -295,7 +279,7 @@ class Game:
             hitboxes.clear()
             floating.clear()
 
-    def switch_room(self, delta: int = None, target_room_id: str = None):
+    def switch_room(self, delta: Optional[int] = None, target_room_id: Optional[str] = None):
         """
         Switch to next room in procedural level or next level.
         
@@ -315,33 +299,35 @@ class Game:
         
         # PROCEDURAL SYSTEM
         
-        current_room_id = self.level.current_room_id
+        current_room_id = getattr(self.level, 'current_room_id', 'room_0')
         
         # Determine next room
         if target_room_id:
             next_room_id = target_room_id
         else:
             # Get next room from graph
-            neighbors = self.current_level_data.internal_graph.get(current_room_id, [])
-            
-            if not neighbors:
-                # No more rooms - reached goal!
-                print(f"[INFO] Level {self.current_level_number} complete!")
+            if self.current_level_data and self.current_level_data.internal_graph:
+                neighbors = self.current_level_data.internal_graph.get(current_room_id, [])
                 
-                # Generate next level
-                self._load_level(level_number=self.current_level_number + 1)
+                if not neighbors:
+                    # No more rooms - reached goal!
+                    
+                    # Generate next level
+                    self._load_level(level_number=self.current_level_number + 1)
+                    
+                    # Reset player position
+                    sx, sy = self.level.spawn
+                    self.player.rect.topleft = (sx, sy)
+                    self.enemies = getattr(self.level, "enemies", [])
+                    
+                    # Open shop between levels
+                    self.shop.open_shop()
+                    return
                 
-                # Reset player position
-                sx, sy = self.level.spawn
-                self.player.rect.topleft = (sx, sy)
-                self.enemies = getattr(self.level, "enemies", [])
-                
-                # Open shop between levels
-                self.shop.open_shop()
-                return
-            
-            # If multiple neighbors, use first (later: let player choose)
-            next_room_id = neighbors[0]
+                # If multiple neighbors, use first (later: let player choose)
+                next_room_id = neighbors[0]
+            else:
+                next_room_id = current_room_id
         
         # Load next room
         self._load_level(room_id=next_room_id)
@@ -653,8 +639,6 @@ class Game:
         grid_screen_x = (grid_x * TILE - self.camera.x) * self.camera.zoom
         grid_screen_y = (grid_y * TILE - self.camera.y) * self.camera.zoom
         tile_screen_size = TILE * self.camera.zoom
-
-        # Draw semi-transparent highlight with terrain-specific colors
         highlight_rect = pygame.Rect(grid_screen_x, grid_screen_y, tile_screen_size, tile_screen_size)
 
         # Default colors if no specific conditions are met
@@ -1626,6 +1610,9 @@ class Game:
             elif opt['type'] == 'action' and not opt.get('close'):
                 text = f"{text}"
             draw_text(self.screen, text, (row.x + 12, row.y + 8), (220,220,230), size=18)
+        self.draw()
+        self._draw_debug_overlay(options, selected, title=title, offset=offset, visible=visible)
+        pygame.display.flip()
 
     def _run_debug_option_menu(self, options, title="Debugger"):
         idx = 0
