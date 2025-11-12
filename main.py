@@ -186,8 +186,10 @@ class Game:
         self.user_seed = seed
 
     def generate_random_seed(self):
-        """Clears the custom seed, allowing random generation."""
+        """Clears the custom seed and forces new random seed generation."""
         self.user_seed = None
+        # Force regeneration of current level with new random seed
+        self.current_active_seed = None  # Clear cached seed to force regeneration
 
     def get_current_seed(self) -> Optional[int]:
         """Returns the currently active seed (user-set or the one used for current level)."""
@@ -253,16 +255,28 @@ class Game:
         # PROCEDURAL SYSTEM
         
         # Generate new level if needed (first load or new level number requested)
-        if self.current_level_data is None or (level_number is not None and level_number != self.current_level_number):
+        if self.current_level_data is None or (level_number is not None and level_number != self.current_level_number) or self.current_active_seed is None:
             
             # Determine seed for reproducible levels
             if self.user_seed is not None:
                 level_seed = self.user_seed
             else:
                 # If no user seed, generate a new random one for this level
-                # or use a deterministic one based on level_number if that's desired behavior
+                # Use multiple entropy sources for better randomness
                 import random
-                level_seed = random.randint(0, 1000000) # Generate a truly random seed
+                import time
+                import os
+                
+                # Combine multiple entropy sources for better random seed generation
+                time_component = int(time.time() * 1000) & 0xFFFFFFFF  # Current time in milliseconds
+                random_component = random.randint(0, 2**31)  # Random component
+                os_component = int.from_bytes(os.urandom(4), 'little') & 0xFFFFFFFF  # OS entropy
+                
+                # Combine components using XOR for better distribution
+                level_seed = (time_component ^ random_component ^ os_component) % 1000000000
+                
+                # Ensure positive seed
+                level_seed = abs(level_seed)
             
             self.current_active_seed = level_seed # Store the seed actually used
             
