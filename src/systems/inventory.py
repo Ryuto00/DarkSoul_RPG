@@ -171,13 +171,13 @@ class Inventory:
         viewport_height = stock_panel_rect.height - header_height - grid_start_y
 
         if self.inventory_stock_mode == "gear":
-            keys = [*self.armament_order, self.UNEQUIP_GEAR_KEY]
+            keys = [self.UNEQUIP_GEAR_KEY, *self.armament_order]
         else:
             available_consumables = []
             for key in self.consumable_order:
                 if self._storage_count(key) > 0:
                     available_consumables.append(key)
-            keys = [*available_consumables, self.UNEQUIP_CONSUMABLE_KEY]
+            keys = [self.UNEQUIP_CONSUMABLE_KEY, *available_consumables]
 
         if not keys:
             return
@@ -289,16 +289,40 @@ class Inventory:
 
         if kind == 'gear_slot':
             idx = hit['index']
-            self.inventory_stock_mode = 'gear' # Set mode when gear slot is clicked
+            self.inventory_stock_mode = 'gear'
+
             if sel and sel.get('kind') == 'gear_slot':
+                # Clicking another gear slot while one is selected: toggle or move selection
                 if sel['index'] == idx:
                     self._clear_inventory_selection()
                 else:
                     self.inventory_selection = {'kind': 'gear_slot', 'index': idx}
+
             elif sel and sel.get('kind') == 'gear_pool':
-                self._equip_armament(idx, sel['key'])
-                self.inventory_selection = {'kind': 'gear_slot', 'index': idx}
+                key = sel.get('key')
+                # Equip selected stock item into this slot
+                self._equip_armament(idx, key)
+
+                # If this slot now has an item, move to next free slot if any
+                if self.gear_slots[idx] is not None:
+                    next_free = None
+                    for offset in range(1, len(self.gear_slots)):
+                        cand = (idx + offset) % len(self.gear_slots)
+                        if self.gear_slots[cand] is None:
+                            next_free = cand
+                            break
+                    if next_free is not None:
+                        # Move selection to next free slot to speed equipping
+                        self.inventory_selection = {'kind': 'gear_slot', 'index': next_free}
+                    else:
+                        # All slots filled, stay on the recently equipped slot
+                        self.inventory_selection = {'kind': 'gear_slot', 'index': idx}
+                else:
+                    # Equip failed; just select this slot
+                    self.inventory_selection = {'kind': 'gear_slot', 'index': idx}
+
             else:
+                # No stock selection: just select exactly the clicked slot
                 self.inventory_selection = {'kind': 'gear_slot', 'index': idx}
         elif kind == 'gear_pool':
             key = hit['key']
@@ -335,16 +359,39 @@ class Inventory:
                 self.inventory_selection = {'kind': 'consumable_pool', 'key': key}
         elif kind == 'consumable_slot':
             idx = hit['index']
-            self.inventory_stock_mode = 'consumable' # Set mode when consumable slot is clicked
+            self.inventory_stock_mode = 'consumable'
+
             if sel and sel.get('kind') == 'consumable_slot':
+                # Clicking same slot toggles, different moves selection
                 if sel['index'] == idx:
                     self._clear_inventory_selection()
                 else:
                     self.inventory_selection = {'kind': 'consumable_slot', 'index': idx}
+
             elif sel and sel.get('kind') == 'consumable_pool':
-                self._equip_consumable(idx, sel['key'])
-                self.inventory_selection = {'kind': 'consumable_slot', 'index': idx}
+                key = sel.get('key')
+                # Equip selected consumable from stock into this slot
+                self._equip_consumable(idx, key)
+
+                # If this slot now has an item, move to next free consumable slot if any
+                if self.consumable_slots[idx]:
+                    next_free = None
+                    for offset in range(1, len(self.consumable_slots)):
+                        cand = (idx + offset) % len(self.consumable_slots)
+                        if self.consumable_slots[cand] is None:
+                            next_free = cand
+                            break
+                    if next_free is not None:
+                        self.inventory_selection = {'kind': 'consumable_slot', 'index': next_free}
+                    else:
+                        # All slots filled, stay on the recently equipped slot
+                        self.inventory_selection = {'kind': 'consumable_slot', 'index': idx}
+                else:
+                    # Equip failed; just select this slot
+                    self.inventory_selection = {'kind': 'consumable_slot', 'index': idx}
+
             else:
+                # No stock selection: just select exactly the clicked slot
                 self.inventory_selection = {'kind': 'consumable_slot', 'index': idx}
         elif kind == 'unequip_armament':
             # Unequip selected armament slot
@@ -353,18 +400,39 @@ class Inventory:
                 if 0 <= idx < len(self.gear_slots):
                     self.gear_slots[idx] = None
                     self.recalculate_player_stats()
-                    self._clear_inventory_selection()
+                    # Select next equipped gear slot, or clear if none
+                    next_idx = None
+                    for offset in range(1, len(self.gear_slots)):
+                        cand = (idx + offset) % len(self.gear_slots)
+                        if self.gear_slots[cand] is not None:
+                            next_idx = cand
+                            break
+                    if next_idx is not None:
+                        self.inventory_selection = {'kind': 'gear_slot', 'index': next_idx}
+                    else:
+                        self._clear_inventory_selection()
         elif kind == 'unequip_armament_stock':
             # Unequip selected armament from stock
             if sel and sel.get('kind') == 'gear_pool':
                 key = sel.get('key')
                 if key:
-                    # Find and remove from gear slots
-                    for i, slot_key in enumerate(self.gear_slots):
+                    # Find and remove from gear slots (from last to first)
+                    for i in range(len(self.gear_slots) - 1, -1, -1):
+                        slot_key = self.gear_slots[i]
                         if slot_key == key:
                             self.gear_slots[i] = None
                             self.recalculate_player_stats()
-                            self._clear_inventory_selection()
+                            # Select next equipped gear slot, or clear if none
+                            next_idx = None
+                            for offset in range(1, len(self.gear_slots)):
+                                cand = (i + offset) % len(self.gear_slots)
+                                if self.gear_slots[cand] is not None:
+                                    next_idx = cand
+                                    break
+                            if next_idx is not None:
+                                self.inventory_selection = {'kind': 'gear_slot', 'index': next_idx}
+                            else:
+                                self._clear_inventory_selection()
                             break
         elif kind == 'unequip_consumable':
             # Unequip selected consumable slot
@@ -372,17 +440,38 @@ class Inventory:
                 idx = sel.get('index', -1)
                 if 0 <= idx < len(self.consumable_slots):
                     self._unequip_consumable_slot(idx)
-                    self._clear_inventory_selection()
+                    # Select next slot that still has a consumable, or clear if none
+                    next_idx = None
+                    for offset in range(1, len(self.consumable_slots)):
+                        cand = (idx + offset) % len(self.consumable_slots)
+                        if self.consumable_slots[cand] is not None:
+                            next_idx = cand
+                            break
+                    if next_idx is not None:
+                        self.inventory_selection = {'kind': 'consumable_slot', 'index': next_idx}
+                    else:
+                        self._clear_inventory_selection()
         elif kind == 'unequip_consumable_stock':
             # Unequip selected consumable from stock
             if sel and sel.get('kind') == 'consumable_pool':
                 key = sel.get('key')
                 if key:
-                    # Find and remove from consumable slots
-                    for i, stack in enumerate(self.consumable_slots):
+                    # Find and remove from consumable slots (from last to first)
+                    for i in range(len(self.consumable_slots) - 1, -1, -1):
+                        stack = self.consumable_slots[i]
                         if stack and stack.key == key:
                             self._unequip_consumable_slot(i)
-                            self._clear_inventory_selection()
+                            # Select next slot that still has a consumable, or clear if none
+                            next_idx = None
+                            for offset in range(1, len(self.consumable_slots)):
+                                cand = (i + offset) % len(self.consumable_slots)
+                                if self.consumable_slots[cand] is not None:
+                                    next_idx = cand
+                                    break
+                            if next_idx is not None:
+                                self.inventory_selection = {'kind': 'consumable_slot', 'index': next_idx}
+                            else:
+                                self._clear_inventory_selection()
                             break
 
     def _format_modifier_lines(self, modifiers):
@@ -554,10 +643,10 @@ class Inventory:
                     stack = self.consumable_slots[idx]
                     selection_key = stack.key if stack else None
         if mode == 'gear':
-            keys = [*self.armament_order, self.UNEQUIP_GEAR_KEY]
+            keys = [self.UNEQUIP_GEAR_KEY, *self.armament_order]
         else:
             consumable_keys = [k for k in self.consumable_order if self._has_consumable_anywhere(k)]
-            keys = [*consumable_keys, self.UNEQUIP_CONSUMABLE_KEY]
+            keys = [self.UNEQUIP_CONSUMABLE_KEY, *consumable_keys]
         for i, key in enumerate(keys):
             row = i // cols
             col = i % cols
@@ -770,7 +859,7 @@ class Inventory:
         if self.inventory_stock_mode == 'gear':
             # Show all gear in armament order (including duplicates)
             available_gear = list(self.armament_order)
-            keys_to_draw = [*available_gear, self.UNEQUIP_GEAR_KEY]
+            keys_to_draw = [self.UNEQUIP_GEAR_KEY, *available_gear]
             current_scroll_offset = self.armament_scroll_offset
         elif self.inventory_stock_mode == 'consumable':
             # Only show consumables that have additional stock available beyond what's equipped
@@ -782,7 +871,7 @@ class Inventory:
                 # Only show if there's storage stock available (beyond what's equipped)
                 if storage_count > 0:
                     available_consumables.append(key)
-            keys_to_draw = [*available_consumables, self.UNEQUIP_CONSUMABLE_KEY]
+            keys_to_draw = [self.UNEQUIP_CONSUMABLE_KEY, *available_consumables]
             current_scroll_offset = self.consumable_scroll_offset
         else:
             keys_to_draw = [] # Should not happen with default 'gear'
