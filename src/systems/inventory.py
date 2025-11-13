@@ -333,6 +333,17 @@ class Inventory:
                         if self.gear_slots[idx] is not None:
                             self.gear_slots[idx] = None
                             self.recalculate_player_stats()
+                            # Select next equipped gear slot, or clear if none
+                            next_idx = None
+                            for offset in range(1, len(self.gear_slots)):
+                                cand = (idx + offset) % len(self.gear_slots)
+                                if self.gear_slots[cand] is not None:
+                                    next_idx = cand
+                                    break
+                            if next_idx is not None:
+                                self.inventory_selection = {'kind': 'gear_slot', 'index': next_idx}
+                            else:
+                                self._clear_inventory_selection()
                 return
             if sel and sel.get('kind') == 'gear_slot':
                 self._equip_armament(sel['index'], key)
@@ -349,6 +360,17 @@ class Inventory:
                     if 0 <= idx < len(self.consumable_slots):
                         if self.consumable_slots[idx]:
                             self._unequip_consumable_slot(idx)
+                            # Select next slot that still has a consumable, or clear if none
+                            next_idx = None
+                            for offset in range(1, len(self.consumable_slots)):
+                                cand = (idx + offset) % len(self.consumable_slots)
+                                if self.consumable_slots[cand] is not None:
+                                    next_idx = cand
+                                    break
+                            if next_idx is not None:
+                                self.inventory_selection = {'kind': 'consumable_slot', 'index': next_idx}
+                            else:
+                                self._clear_inventory_selection()
                 return
             if sel and sel.get('kind') == 'consumable_slot':
                 self._equip_consumable(sel['index'], key)
