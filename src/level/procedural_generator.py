@@ -497,7 +497,7 @@ def place_entrance_at_spawn(room: RoomData, movement_attrs: MovementAttributes) 
         ground_x = door_pos[0] + dx
         ground_y = door_pos[1] + 1
         if room.is_in_bounds(ground_x, ground_y):
-                    room.set_tile(ground_x, ground_y, TileCell(tile_type=TileType.WALL))
+            room.set_tile(ground_x, ground_y, TileCell(tile_type=TileType.WALL))
     
     return door_pos
 
@@ -742,10 +742,15 @@ def place_doors_with_spawn_entrance(
             print(f"DEBUG: Failed to place exit door in quadrant {quadrant}")
             continue
     
-    # Verify we have at least entrance + 1 exit
+    # Verify we have correct number of doors
     print(f"DEBUG: Total doors placed: {len(room.doors)}")
-    if len(room.doors) < 2:
-        print(f"DEBUG: Not enough doors placed (need at least 2)")
+    
+    # For final rooms (exit_doors=0), we only need 1 door (entrance)
+    # For other rooms (exit_doors>0), we need at least 2 doors (entrance + exit)
+    min_doors_needed = 1 if exit_doors == 0 else 2
+    
+    if len(room.doors) < min_doors_needed:
+        print(f"DEBUG: Not enough doors placed (need at least {min_doors_needed})")
         return False
     
     print(f"DEBUG: Door placement successful!")
@@ -933,6 +938,14 @@ def generate_room_layout(config: GenerationConfig) -> RoomData:
         grid={}
     )
     
+    # Explicitly set boundary walls to ensure they exist in the grid
+    for x in range(width):
+        room.grid[(x, 0)] = TileCell(tile_type=TileType.WALL)  # Top wall
+        room.grid[(x, height - 1)] = TileCell(tile_type=TileType.WALL)  # Bottom wall
+    for y in range(height):
+        room.grid[(0, y)] = TileCell(tile_type=TileType.WALL)  # Left wall
+        room.grid[(width - 1, y)] = TileCell(tile_type=TileType.WALL)  # Right wall
+    
     # Calculate required corridor dimensions
     # Must accommodate player width AND minimum corridor width
     carve_width = max(
@@ -964,15 +977,17 @@ def generate_room_layout(config: GenerationConfig) -> RoomData:
         })
         
         # Bottom-left quadrant: (1,height-10) to (10,height-1) or room bounds
+        # Adjust max_y to leave room for ground below spawn area (need at least 2 tiles from bottom)
         corner_regions.append({
             'min_x': 1, 'max_x': min(10, width - 3),
-            'min_y': max(height - 10, 2), 'max_y': height - 2
+            'min_y': max(height - 10, 2), 'max_y': height - 3
         })
         
         # Bottom-right quadrant: (width-10,height-10) to (width-1,height-1) or room bounds
+        # Adjust max_y to leave room for ground below spawn area (need at least 2 tiles from bottom)
         corner_regions.append({
             'min_x': max(width - 10, 2), 'max_x': width - 2,
-            'min_y': max(height - 10, 2), 'max_y': height - 2
+            'min_y': max(height - 10, 2), 'max_y': height - 3
         })
     
     # Generate random spawn position within chosen quadrant

@@ -83,9 +83,18 @@ class Level:
         
         # Set doors from PCG RoomData doors
         for door_id, door in room_data.doors.items():
+            dx, dy = door.position
+            # Mark door tile in numeric grid so debug tools (F8) can detect it
+            if room_data.is_in_bounds(dx, dy):
+                try:
+                    self.grid[dy][dx] = TileType.DOOR.value
+                except Exception:
+                    # Keep fail-safe; door overlay will still use rect
+                    pass
+
             door_rect = pygame.Rect(
-                door.position[0] * TILE,
-                door.position[1] * TILE,
+                dx * TILE,
+                dy * TILE,
                 TILE,
                 TILE
             )

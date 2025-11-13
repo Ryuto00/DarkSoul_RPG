@@ -1069,6 +1069,59 @@ class Game:
             except Exception:
                 pass
 
+            # Door-specific debug: show PCG door type/flags
+            try:
+                # Only if this tile is the DOOR tile type
+                if hasattr(tile_type, "is_door") and tile_type.is_door:
+                    level_obj = getattr(self, "level", None)
+                    room_data = getattr(level_obj, "room_data", None)
+
+                    # Prefer PCG RoomData door metadata when available
+                    doors = getattr(room_data, "doors", {}) if room_data else {}
+
+                    door_match = None
+                    for d in doors.values():
+                        pos = getattr(d, "position", None)
+                        if pos == (grid_x, grid_y):
+                            door_match = d
+                            break
+
+                    if door_match is not None:
+                        # Core flag you asked for: which type of door is this
+                        door_id = getattr(door_match, "door_id", "?")
+                        door_type_str = getattr(door_match, "door_type", "unknown")
+                        is_locked = getattr(door_match, "is_locked", False)
+
+                        lines.append("[DOOR]")
+                        lines.append(f"id={door_id} type={door_type_str} locked={is_locked}")
+
+                        # Optional but useful: show destinations summary
+                        dests = getattr(door_match, "destinations", {}) or {}
+                        if dests:
+                            if len(dests) == 1:
+                                k, v = next(iter(dests.items()))
+                                lines.append(f"dest={k}->{v}")
+                            else:
+                                lines.append(
+                                    "destinations="
+                                    + ", ".join(f"{k}->{v}" for k, v in dests.items())
+                                )
+                        else:
+                            lines.append("destinations=NONE")
+
+                        # Show TileCell flags from original RoomData if available
+                        if room_data and hasattr(room_data, "grid"):
+                            tile_cell = room_data.grid.get((grid_x, grid_y))
+                            if tile_cell and hasattr(tile_cell, "flags"):
+                                flags = getattr(tile_cell, "flags", set())
+                                if flags:
+                                    lines.append(f"flags={flags}")
+                                else:
+                                    lines.append("flags=NONE")
+            except Exception:
+                # Never let this crash the inspector
+                pass
+
             draw_panel(lines)
         except Exception:
             # Fail-safe: never let inspector crash the game.
