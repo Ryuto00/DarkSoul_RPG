@@ -1,5 +1,8 @@
 {
   "pcg_config": {
+    "use_pcg": true,
+    "seed_mode": "fixed",
+    "seed": 45805229,
     "num_levels": 3,
     "rooms_per_level": 6,
     "room_width": 50,

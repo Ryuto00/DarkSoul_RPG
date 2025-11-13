@@ -108,8 +108,8 @@ class Menu:
         """Blocking title menu: Start Game / Class Select / How to Play / Quit.
         Static-only version (procedural generation disabled).
         """
-        # 1. Start Game, 2. Class Select, 3. How to Play, 4. Quit
-        options = ["Start Game", "Class Select", "How to Play", "Quit"]
+        # 1. Start Game, 2. Class Select, 3. PCG Options, 4. How to Play, 5. Quit
+        options = ["Start Game", "Class Select", "PCG Options", "How to Play", "Quit"]
         idx = 0
         while True:
             self.clock.tick(FPS)
@@ -130,6 +130,8 @@ class Menu:
                             return
                         elif choice == "Class Select":
                             self.game.selected_class = self.select_class()
+                        elif choice == "PCG Options":
+                            self.pcg_options_menu()
                         elif choice == "How to Play":
                             self.how_to_play_screen()
                         elif choice == "Quit":
@@ -139,9 +141,11 @@ class Menu:
                         return
                     elif ev.key in (pygame.K_2, pygame.K_c):
                         self.game.selected_class = self.select_class()
-                    elif ev.key in (pygame.K_3, pygame.K_h):
+                    elif ev.key in (pygame.K_3, pygame.K_p):
+                        self.pcg_options_menu()
+                    elif ev.key in (pygame.K_4, pygame.K_h):
                         self.how_to_play_screen()
-                    elif ev.key in (pygame.K_4, pygame.K_q): # Hotkey for Quit
+                    elif ev.key in (pygame.K_5, pygame.K_q): # Hotkey for Quit
                         pygame.quit(); sys.exit()
 
             # draw title menu
@@ -152,13 +156,16 @@ class Menu:
                 y = 200 + i*52
                 col = (255,220,140) if i == idx else (200,200,200)
                 draw_text(self.screen, f"{i+1}. {opt}", (WIDTH//2 - 160, y), col, size=28)
-            # Summary line with current class only (procedural generation removed)
+            # Summary line with current class and PCG status/seed
+            from src.level.config_loader import load_pcg_runtime_config
+            runtime = load_pcg_runtime_config()
+            mode = "PCG" if runtime.use_pcg else "Legacy"
             draw_text(self.screen,
-                      f"Class: {self.game.selected_class}",
-                      (WIDTH//2 - 140, HEIGHT-96), (180,200,220), size=18)
+                      f"Class: {self.game.selected_class} | Mode: {mode} | Seed: {runtime.seed}",
+                      (WIDTH//2 - 260, HEIGHT-96), (180,200,220), size=18)
             draw_text(self.screen,
-                      "Use Up/Down, Enter to select • 1-4 hotkeys",
-                      (WIDTH//2 - 210, HEIGHT-64), (160,160,180), size=16)
+                      "Use Up/Down, Enter to select • 1-5 hotkeys",
+                      (WIDTH//2 - 260, HEIGHT-64), (160,160,180), size=16)
             pygame.display.flip()
 
     def game_over_screen(self):
@@ -286,6 +293,183 @@ class Menu:
         Procedural generation has been removed; this now returns immediately.
         """
         return
+
+    def pcg_options_menu(self):
+        """PCG configuration menu.
+
+        - Option 1: Toggle PCG ON/OFF
+        - Option 2: Seed Mode (Fixed / Random)
+        - Option 3: Context-aware:
+            * If Fixed: Set Fixed Seed (manual input)
+            * If Random: Random New Seed (regenerate & store)
+        Always shows the currently effective seed at the bottom.
+        """
+        from src.level.config_loader import (
+            load_pcg_runtime_config,
+            save_pcg_runtime_config,
+        )
+        import random
+
+        runtime = load_pcg_runtime_config()
+
+        idx = 0
+        while True:
+            self.clock.tick(FPS)
+            for ev in pygame.event.get():
+                if ev.type == pygame.QUIT:
+                    pygame.quit(); sys.exit()
+                elif ev.type == pygame.KEYDOWN:
+                    if ev.key == pygame.K_ESCAPE:
+                        # Esc always leaves PCG menu
+                        return
+
+                    if ev.key in (pygame.K_UP, pygame.K_w):
+                        idx = (idx - 1) % 4
+                    elif ev.key in (pygame.K_DOWN, pygame.K_s):
+                        idx = (idx + 1) % 4
+                    elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+                        # Activate selected option
+                        if idx == 0:
+                            # Toggle PCG
+                            runtime = runtime._replace(use_pcg=not runtime.use_pcg)
+                            save_pcg_runtime_config(runtime)
+                        elif idx == 1:
+                            # Toggle seed mode
+                            new_mode = "random" if runtime.seed_mode == "fixed" else "fixed"
+                            runtime = runtime._replace(seed_mode=new_mode)
+                            save_pcg_runtime_config(runtime)
+                        elif idx == 2:
+                            if runtime.seed_mode == "fixed":
+                                # Set fixed seed via simple numeric input
+                                runtime = self._pcg_prompt_fixed_seed(runtime)
+                                save_pcg_runtime_config(runtime)
+                            else:
+                                # Random new seed now (and persist)
+                                new_seed = random.randint(1, 2**31 - 1)
+                                runtime = runtime._replace(seed=new_seed)
+                                save_pcg_runtime_config(runtime)
+                        elif idx == 3:
+                            return
+
+            # Draw menu
+            self.screen.fill((10, 10, 16))
+            draw_text(self.screen, "PCG OPTIONS", (WIDTH//2 - 120, 60), (255,220,140), size=40, bold=True)
+
+            # Option labels
+            labels = []
+            labels.append(f"Use PCG: {'ON' if runtime.use_pcg else 'OFF'}")
+            labels.append(f"Seed Mode: {runtime.seed_mode.upper()}")
+            if runtime.seed_mode == "fixed":
+                labels.append("Set Fixed Seed")
+            else:
+                labels.append("Random New Seed")
+            labels.append("Back")
+
+            base_y = 160
+            for i, text in enumerate(labels):
+                y = base_y + i * 40
+                col = (255,220,140) if i == idx else (200,200,200)
+                draw_text(self.screen, f"{i+1}. {text}", (WIDTH//2 - 160, y), col, size=26)
+
+            # Show currently effective seed (always visible)
+            draw_text(self.screen,
+                      f"Current Seed: {runtime.seed}",
+                      (WIDTH//2 - 160, base_y + 4 * 40 + 24),
+                      (180,200,220), size=20)
+            draw_text(self.screen,
+                      "Esc/Enter on 'Back' to return",
+                      (WIDTH//2 - 180, HEIGHT-64), (140,140,160), size=16)
+
+            pygame.display.flip()
+
+    def _pcg_prompt_fixed_seed(self, runtime):
+        """Prompt user to enter a fixed seed (digits only)."""
+        import pygame
+
+        seed_str = str(runtime.seed)
+        backspace_held = False
+        backspace_timer = 0
+        initial_delay = 250  # ms before repeat starts
+        repeat_interval = 40  # ms between repeats
+
+        while True:
+            dt = self.clock.tick(FPS)
+            for ev in pygame.event.get():
+                if ev.type == pygame.QUIT:
+                    pygame.quit(); sys.exit()
+                elif ev.type == pygame.KEYDOWN:
+                    if ev.key in (pygame.K_ESCAPE,):
+                        return runtime
+                    elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+                        try:
+                            new_seed = int(seed_str) if seed_str else runtime.seed
+                        except ValueError:
+                            new_seed = runtime.seed
+                        return runtime._replace(seed=new_seed, seed_mode="fixed")
+                    elif ev.key == pygame.K_BACKSPACE:
+                        # start/trigger backspace repeat behavior
+                        backspace_held = True
+                        backspace_timer = 0
+                        if seed_str:
+                            seed_str = seed_str[:-1]
+                    else:
+                        if ev.unicode.isdigit():
+                            if len(seed_str) < 10:
+                                seed_str += ev.unicode
+                elif ev.type == pygame.KEYUP:
+                    if ev.key == pygame.K_BACKSPACE:
+                        backspace_held = False
+                        backspace_timer = 0
+
+            # handle held-backspace auto-repeat
+            if backspace_held and seed_str:
+                backspace_timer += dt
+                if backspace_timer >= initial_delay:
+                    # delete at fixed interval while held
+                    repeats = (backspace_timer - initial_delay) // repeat_interval
+                    if repeats > 0:
+                        # remove one char per interval
+                        new_len = max(0, len(seed_str) - int(repeats))
+                        if new_len != len(seed_str):
+                            seed_str = seed_str[:new_len]
+                        # keep residual time to avoid burst deletions
+                        backspace_timer = initial_delay + (backspace_timer - initial_delay) % repeat_interval
+
+            self.screen.fill((10, 10, 18))
+
+            title_text = "SET FIXED SEED"
+            title_width = get_font(36, bold=True).size(title_text)[0]
+            draw_text(self.screen, title_text,
+                      (WIDTH//2 - title_width // 2, 80),
+                      (255,220,140), size=36, bold=True)
+
+            current_text = f"Current Seed: {runtime.seed}"
+            current_width = get_font(20).size(current_text)[0]
+            draw_text(self.screen, current_text,
+                      (WIDTH//2 - current_width // 2, 150),
+                      (200,200,210), size=20)
+
+            hint_text = "Type digits for new seed, Enter to confirm"
+            hint_width = get_font(18).size(hint_text)[0]
+            draw_text(self.screen, hint_text,
+                      (WIDTH//2 - hint_width // 2, 190),
+                      (200,200,210), size=18)
+
+            # If user cleared input entirely, show empty after colon (no fallback)
+            new_seed_display = seed_str if seed_str != "" else ""
+            new_text = f"New Seed: {new_seed_display}"
+            new_width = get_font(28).size(new_text)[0]
+            draw_text(self.screen, new_text,
+                      (WIDTH//2 - new_width // 2, 240),
+                      (220,220,240), size=28)
+
+            footer_text = "Esc to cancel (keeps current seed)"
+            footer_width = get_font(18).size(footer_text)[0]
+            draw_text(self.screen, footer_text,
+                      (WIDTH//2 - footer_width // 2, HEIGHT-64),
+                      (160,160,180), size=18)
+
+            pygame.display.flip()
 
     def settings_screen(self):
         """Simple settings placeholder. Press Esc to go back."""
