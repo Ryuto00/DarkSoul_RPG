@@ -180,10 +180,45 @@ class Game:
         self.player = Player(sx, sy, cls=self.selected_class)
         self.enemies = self.level.enemies
 
+        # Reset camera to player position immediately to prevent visual glitch
+        self.camera.update(self.player.rect, 0)
+
         # Reset inventory & shop
         self.inventory = Inventory(self)
         self.inventory._refresh_inventory_defaults()
         self.shop = Shop(self)
+
+    def restart_run(self):
+        """
+        Restart from the current level (preserving level progress).
+        """
+        # Determine current level to restart
+        if self.use_pcg:
+            level_to_restart = self.current_level_number
+        else:
+            level_to_restart = self.level_index
+
+        # Load the current level
+        self._load_level(level_number=level_to_restart, initial=True)
+
+        # Recreate player at the new spawn
+        sx, sy = self.level.spawn
+        self.player = Player(sx, sy, cls=self.selected_class)
+
+        # Sync enemies from the level
+        self.enemies = getattr(self.level, "enemies", [])
+
+        # Reset/refresh inventory if present
+        if hasattr(self, "inventory") and self.inventory is not None:
+            self.inventory._refresh_inventory_defaults()
+
+        # Clear transient collections
+        from src.entities.entities import hitboxes, floating
+        hitboxes.clear()
+        floating.clear()
+
+        # Reset camera
+        self.camera = Camera()
 
     def _toggle_pcg(self, enable: bool):
         """Toggle PCG mode and restart current level."""
