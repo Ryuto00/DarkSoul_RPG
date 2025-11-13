@@ -25,3 +25,4 @@ Thumbs.db
 *.log
 .pytest_cache/
 .claude
+AGENTS.md
