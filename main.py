@@ -14,6 +14,7 @@ from config import (
     TILE,
 )
 from src.core.utils import draw_text, get_font
+from src.core.interaction import handle_proximity_interactions, find_spawn_point, parse_door_target
 from src.systems.camera import Camera
 from src.level.legacy_level import LegacyLevel, ROOM_COUNT
 from src.entities.entities import Player, hitboxes, floating, DamageNumber
@@ -41,6 +42,10 @@ class Game:
         # Level configuration: static layout only (procedural disabled)
         self.level_type = "static"
         self.difficulty = 1
+        
+        # Door interaction state
+        self.interaction_prompt = None
+        self.interaction_position = None
 
         # Initialize menu system
         self.menu = Menu(self)
@@ -407,6 +412,9 @@ class Game:
                 floating.remove(dn)
 
         self.camera.update(self.player.rect, dt)
+        
+        # Handle door interactions
+        self._handle_door_interactions()
 
     def _draw_area_overlay(self):
         """
@@ -1109,6 +1117,23 @@ class Game:
         if self.debug_collision_log:
             self._draw_collision_log_overlay()
 
+        # Draw interaction prompt if active
+        if self.interaction_prompt and self.interaction_position:
+            prompt_x, prompt_y = self.interaction_position
+            # Convert world coordinates to screen coordinates
+            screen_x = int((prompt_x - self.camera.x) * self.camera.zoom)
+            screen_y = int((prompt_y - self.camera.y) * self.camera.zoom)
+            
+            # Draw prompt background
+            font = self.font_small
+            text_surf = font.render(self.interaction_prompt, True, (255, 255, 200))
+            text_rect = text_surf.get_rect(center=(screen_x, screen_y))
+            padding = 8
+            bg_rect = text_rect.inflate(padding * 2, padding)
+            pygame.draw.rect(self.screen, (40, 40, 60, 200), bg_rect, border_radius=4)
+            pygame.draw.rect(self.screen, (255, 255, 200), bg_rect, width=1, border_radius=4)
+            self.screen.blit(text_surf, text_rect)
+
         # HUD
         x, y = 16, 16
         for i in range(self.player.max_hp):
@@ -1581,6 +1606,68 @@ class Game:
 
         draw_text(self.screen, f"Room {idx+1}/{ROOM_COUNT}", (panel.centerx - 80, panel.centery - 10),
                   (220,220,240), size=32, bold=True)
+
+    def _handle_door_interactions(self):
+        """Handle proximity-based door interactions."""
+        # Get current tile grid from level (if available)
+        tile_grid = getattr(self.level, "tile_grid", None)
+        if not tile_grid:
+            return
+        
+        # Check if E key was pressed this frame
+        keys = pygame.key.get_pressed()
+        is_e_pressed = keys[pygame.K_e]
+        
+        # Define interaction callback
+        def on_door_interact(tile_data, tile_pos):
+            target = parse_door_target(tile_data.interaction.on_interact_id)
+            if target:
+                level_name, entrance_id = target
+                self._transition_to_level(level_name, entrance_id)
+        
+        # Check for proximity interactions
+        result = handle_proximity_interactions(
+            player_rect=self.player.rect,
+            tile_grid=tile_grid,
+            tile_size=TILE,
+            is_e_pressed=is_e_pressed,
+            on_interact=on_door_interact
+        )
+        
+        if result:
+            self.interaction_prompt, self.interaction_position = result
+        else:
+            self.interaction_prompt = None
+            self.interaction_position = None
+    
+    def _transition_to_level(self, level_name: str, entrance_id: str):
+        """Transition to a new level and spawn at specific entrance."""
+        # For now, treat level_name as room index for legacy system
+        # In future, this could load actual level files
+        try:
+            room_index = int(level_name.replace("Level", "")) - 1
+            room_index = max(0, min(room_index, ROOM_COUNT - 1))
+        except (ValueError, AttributeError):
+            # Fallback to next room if parsing fails
+            room_index = (self.level_index + 1) % ROOM_COUNT
+        
+        # Load the target level
+        self._load_level(room_index)
+        
+        # Find spawn point for the specified entrance
+        spawn_pos = find_spawn_point(
+            getattr(self.level, "tile_grid", []),
+            entrance_id
+        )
+        
+        if spawn_pos:
+            tx, ty = spawn_pos
+            self.player.rect.centerx = tx * TILE + TILE // 2
+            self.player.rect.centery = ty * TILE + TILE // 2
+        else:
+            # Fallback to default spawn
+            sx, sy = getattr(self.level, "spawn", (100, 100))
+            self.player.rect.topleft = (sx, sy)
 
 
 if __name__ == '__main__':

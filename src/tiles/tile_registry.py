@@ -30,7 +30,7 @@ class TileRegistry:
                 can_pass_through=True
             ),
             visual=VisualProperties(
-                base_color=(0, 0, 0, 0)  # Transparent
+                base_color=(0, 0, 0)  # Transparent
             ),
             physics=PhysicalProperties(
                 friction=0.0
@@ -68,59 +68,101 @@ class TileRegistry:
             )
         ))
 
-
-
-        # Platform tile
+        # Door Entrance tile (spawn marker)
         self.register_tile(TileData(
-            tile_type=TileType.PLATFORM,
-            name="Platform",
+            tile_type=TileType.DOOR_ENTRANCE,
+            name="Door Entrance",
             collision=CollisionProperties(
-                collision_type="top_only",
-                can_walk_on=True,
-                can_pass_through=True,
-                collision_box_offset=(0, 20),
-                collision_box_size=(24, 4)
+                collision_type="none",
+                can_pass_through=True
             ),
             visual=VisualProperties(
-                base_color=(139, 90, 43),
-                border_radius=2
-            ),
-            physics=PhysicalProperties(
-                friction=0.9
-            ),
-            audio=AudioProperties(
-                footstep_sound="step_wood",
-                contact_sound="land_wood"
-            )
-        ))
-
-        # Breakable Wall tile
-        self.register_tile(TileData(
-            tile_type=TileType.BREAKABLE_WALL,
-            name="Breakable Wall",
-            collision=CollisionProperties(
-                collision_type="full",
-                collision_box_size=(24, 24)
-            ),
-            visual=VisualProperties(
-                base_color=(139, 69, 19),
+                base_color=(40, 160, 220),
                 border_radius=4,
-                border_color=(101, 50, 14)
-            ),
-            physics=PhysicalProperties(
-                friction=0.7,
-                density=0.5
+                render_border=True,
+                border_color=(255, 255, 255)
             ),
             interaction=InteractionProperties(
-                breakable=True,
-                health_points=3,
-                resistance=0.5
-            ),
-            audio=AudioProperties(
-                contact_sound="hit_crate",
-                break_sound="break_wood"
+                is_trigger=True,
+                is_spawn_point=True
             )
         ))
+
+        # Door Exit tile (proximity + E to interact)
+        self.register_tile(TileData(
+            tile_type=TileType.DOOR_EXIT,
+            name="Door Exit",
+            collision=CollisionProperties(
+                collision_type="none",
+                can_pass_through=True
+            ),
+            visual=VisualProperties(
+                base_color=(180, 120, 40),
+                border_radius=4,
+                render_border=True,
+                border_color=(255, 255, 255)
+            ),
+            interaction=InteractionProperties(
+                interactable=True,
+                is_trigger=True,
+                requires_proximity=True,
+                proximity_radius=24.0,
+                prompt="Press E to enter",
+                on_interact_id="door_exit_default"
+            )
+        ))
+
+        # Door Exit 1 tile (first exit slot)
+        self.register_tile(TileData(
+            tile_type=TileType.DOOR_EXIT_1,
+            name="Door Exit 1",
+            collision=CollisionProperties(
+                collision_type="none",
+                can_pass_through=True
+            ),
+            visual=VisualProperties(
+                base_color=(200, 100, 50),
+                border_radius=4,
+                render_border=True,
+                border_color=(255, 200, 100)
+            ),
+            interaction=InteractionProperties(
+                interactable=True,
+                is_trigger=True,
+                requires_proximity=True,
+                proximity_radius=24.0,
+                prompt="Press E to enter (Exit 1)",
+                on_interact_id="door_exit_1"
+            )
+        ))
+
+        # Door Exit 2 tile (second exit slot)
+        self.register_tile(TileData(
+            tile_type=TileType.DOOR_EXIT_2,
+            name="Door Exit 2",
+            collision=CollisionProperties(
+                collision_type="none",
+                can_pass_through=True
+            ),
+            visual=VisualProperties(
+                base_color=(150, 80, 120),
+                border_radius=4,
+                render_border=True,
+                border_color=(200, 150, 255)
+            ),
+            interaction=InteractionProperties(
+                interactable=True,
+                is_trigger=True,
+                requires_proximity=True,
+                proximity_radius=24.0,
+                prompt="Press E to enter (Exit 2)",
+                on_interact_id="door_exit_2"
+            )
+        ))
+
+
+
+
 
 
 

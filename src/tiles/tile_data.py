@@ -50,6 +50,11 @@ class InteractionProperties:
     collectible: bool = False
     is_trigger: bool = False
     resistance: float = 1.0  # Resistance to damage/tools
+    prompt: str = ""  # Text to show when in range (e.g. "Press E to enter")
+    requires_proximity: bool = False
+    proximity_radius: float = 24.0
+    on_interact_id: str = ""  # Identifier for routing interaction logic
+    is_spawn_point: bool = False  # Marks entrance tiles for spawning
 
 
 @dataclass

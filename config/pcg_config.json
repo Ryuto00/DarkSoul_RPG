@@ -1,0 +1,15 @@
+{
+  "pcg_config": {
+    "num_levels": 3,
+    "rooms_per_level": 6,
+    "room_width": 50,
+    "room_height": 50,
+    "air_tile_id": 0,
+    "wall_tile_id": 1,
+    "add_doors": true,
+    "door_entrance_tile_id": 2,
+    "door_exit_tile_id": 3,
+    "door_exit_1_tile_id": 4,
+    "door_exit_2_tile_id": 5
+  }
+}
