@@ -50,7 +50,8 @@ class TileRegistry:
             name="Wall",
             collision=CollisionProperties(
                 collision_type="full",
-                collision_box_size=(24, 24)
+                collision_box_size=(24, 24),
+                can_walk_on=True
             ),
             visual=VisualProperties(
                 base_color=(54, 60, 78),

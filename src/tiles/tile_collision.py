@@ -7,7 +7,9 @@ from .tile_registry import tile_registry
 class TileCollision:
     """Handles collision detection and response for tiles."""
 
-    def __init__(self, tile_size: int = 24):
+    def __init__(self, tile_size: int = None):
+        from config import TILE
+        self.tile_size = tile_size if tile_size is not None else TILE
         self.tile_size = tile_size
 
     def get_tile_at_pos(self, x: float, y: float, tile_grid: List[List[int]]) -> Optional[TileType]:

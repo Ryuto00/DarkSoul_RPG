@@ -7,7 +7,9 @@ from .tile_registry import tile_registry
 class TileRenderer:
     """Handles rendering of tiles."""
 
-    def __init__(self, tile_size: int = 24):
+    def __init__(self, tile_size: int = None):
+        from config import TILE
+        self.tile_size = tile_size if tile_size is not None else TILE
         self.tile_size = tile_size
         self.tile_cache: Dict[TileType, pygame.Surface] = {}
         self.zoom_cache: Dict[str, pygame.Surface] = {}  # For zoom-scaled surfaces

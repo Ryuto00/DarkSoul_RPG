@@ -116,11 +116,8 @@ class Game:
         
         # Initialize first level
         try:
-            # Use appropriate level based on system
-            if self.use_pcg:
-                initial_level = 1  # PCG levels are 1-based
-            else:
-                initial_level = 0  # Legacy levels are 0-based
+            # Use 0-based index to start at Room 1 (ROOMS[0])
+            initial_level = 0
             self._load_level(level_number=initial_level, initial=True)
         except Exception as e:
             import traceback
@@ -142,9 +139,7 @@ class Game:
         Reset game state to initial state (similar to constructor logic).
         This is used when returning to main menu from death screen.
         """
-        # Reload PCG configuration to get latest settings
-        runtime = load_pcg_runtime_config()
-        self.use_pcg = runtime.use_pcg
+
         
         # Reset level tracking
         self.level_index = 0
@@ -152,74 +147,64 @@ class Game:
         self.current_level_data = None
         
         # Clear transient collections
-        from src.entities.entities import hitboxes, floating
         hitboxes.clear()
         floating.clear()
         
-        # Reinitialize first level
-        try:
-            # Use appropriate level based on system
-            if self.use_pcg:
-                initial_level = 1  # PCG levels are 1-based
-                # Generate PCG levels if needed
-                from src.level.pcg_generator_simple import generate_simple_pcg_level_set
-                from src.level.level_loader import level_loader
-                level_set = generate_simple_pcg_level_set(seed=self.pcg_seed)
-                level_set.save_to_json("data/levels/generated_levels.json")
-                level_loader._level_set = level_set
-            else:
-                initial_level = 0  # Legacy levels are 0-based
-            self._load_level(level_number=initial_level, initial=True)
-        except Exception as e:
-            import traceback
-            traceback.print_exc()
-            return
-
+        # Initialize first level (same logic as constructor)
+        initial_level = 0
+        self._load_level(level_number=initial_level, initial=True)
+        
         # create player with chosen class
         sx, sy = self.level.spawn
         self.player = Player(sx, sy, cls=self.selected_class)
         self.enemies = self.level.enemies
-
+        
         # Reset inventory & shop
-        self.inventory = Inventory(self)
-        self.inventory._refresh_inventory_defaults()
-        self.shop = Shop(self)
+        if hasattr(self, "inventory") and self.inventory is not None:
+            self.inventory._refresh_inventory_defaults()
+        
+        # Reset camera
+        self.camera = Camera()
+        
 
-    def _toggle_pcg(self, enable: bool):
-        """Toggle PCG mode and restart current level."""
-        from src.level.config_loader import save_pcg_runtime_config, PCGRuntimeConfig
+
+    
+
+    # === Level Management (static rooms only) ===
+
+    def restart_run(self):
+        """
+        Restart from the current level (preserving level progress).
+        """
+
         
-        # Update config
-        self.use_pcg = enable
-        runtime = PCGRuntimeConfig(
-            use_pcg=enable,
-            seed_mode="fixed",
-            seed=self.pcg_seed
-        )
-        save_pcg_runtime_config(runtime)
+        # Legacy mode: restart from current level index (0-based)
+        level_to_restart = self.level_index
         
-        # Restart current level
-        if enable:
-            # Generate PCG levels if needed
-            from src.level.pcg_generator_simple import generate_simple_pcg_level_set
-            from src.level.level_loader import level_loader
-            level_set = generate_simple_pcg_level_set(seed=self.pcg_seed)
-            level_set.save_to_json("data/levels/generated_levels.json")
-            level_loader._level_set = level_set
-            self._load_pcg_level(1, None, initial=True)
-        else:
-            # Switch to legacy
-            self._load_static_level(0, initial=True)
-        
-        # Recreate player at spawn
+
+
+        # Load the current level
+        self._load_level(level_to_restart, initial=True)
+
+        # Recreate player at the new spawn
         sx, sy = self.level.spawn
         self.player = Player(sx, sy, cls=self.selected_class)
-        self.enemies = self.level.enemies
-        
+
+        # Sync enemies from the level
+        self.enemies = getattr(self.level, "enemies", [])
+
+        # Reset/refresh inventory if present
+        if hasattr(self, "inventory") and self.inventory is not None:
+            self.inventory._refresh_inventory_defaults()
+
         # Clear transient collections
-        from src.entities.entities import hitboxes, floating
         hitboxes.clear()
         floating.clear()
+
+        # Reset camera
+        self.camera = Camera()
+        
+
 
     def _load_level(self, level_number: Optional[int] = None, room_id: Optional[str] = None, initial: bool = False):
         """
@@ -236,24 +221,29 @@ class Game:
         else:
             self._load_static_level(level_number or 0, initial)
 
-    def _load_static_level(self, index: int, initial: bool = False):
+def _load_static_level(self, index: int, initial: bool = False):
         """Legacy static room loading (for backwards compatibility)."""
 
         self.level_index = index
         room_index = index % ROOM_COUNT
         
-        # Create LegacyLevel instance
-        from src.level.legacy_level import LegacyLevel
-        lvl = LegacyLevel(room_index)
+        
+
+        
+        try:
+            # Use LegacyLevel for old static room system
+            lvl = LegacyLevel(room_index)
+        except Exception as e:
+
+            return
         
         self.level = lvl
         self.enemies = lvl.enemies
         
         if not initial:
-            from src.entities.entities import hitboxes, floating
             hitboxes.clear()
             floating.clear()
-
+            
     def _load_pcg_level(self, level_number: Optional[int], room_id: Optional[str], initial: bool = False):
         """Load a PCG-generated level."""
         from src.level.level_loader import level_loader
@@ -287,27 +277,28 @@ class Game:
                 self.solids = []
                 self.doors = []
                 
-                # Initialize tile collision system
-                from src.tiles.tile_collision import TileCollision
-                from config import TILE
-                self.tile_collision = TileCollision(TILE)
-                
-            def draw(self, screen, camera, dt: float = 0.0):
-                """Use the proper tile system for PCG levels."""
+            def draw(self, screen, camera):
+                """Simple tile renderer for PCG levels."""
                 from src.tiles.tile_renderer import TileRenderer
+                from src.tiles.tile_types import TileType
                 from config import TILE
                 
-                renderer = TileRenderer(tile_size=TILE)
+                renderer = TileRenderer()
                 
-                # Use the canonical render_tile_grid method
-                renderer.render_tile_grid(
-                    surface=screen,
-                    tile_grid=self.tile_grid,
-                    camera_offset=(camera.x, camera.y),
-                    visible_rect=screen.get_rect(),
-                    time_delta=dt,
-                    zoom=camera.zoom,
-                )
+                # Render tiles
+                for y, row in enumerate(self.tiles):
+                    for x, tile_id in enumerate(row):
+                        if tile_id >= 0:  # Valid tile
+                            try:
+                                tile_type = TileType(tile_id)
+                                world_x = x * TILE
+                                world_y = y * TILE
+                                screen_x = int((world_x - camera.x) * camera.zoom)
+                                screen_y = int((world_y - camera.y) * camera.zoom)
+                                renderer.render_tile(screen, tile_type, screen_x, screen_y)
+                            except ValueError:
+                                # Skip unknown tile types
+                                pass
         
         lvl = PCGLevel()
         lvl.level_id = room.level_id
@@ -325,29 +316,7 @@ class Game:
         lvl.spawn[0] = w // 2 * TILE
         lvl.spawn[1] = (h - 2) * TILE  # just above floor
         
-        # Convert door_exits metadata into actual door tiles
-        from src.tiles.tile_types import TileType
-        
-        if lvl.tiles:
-            h = len(lvl.tiles)
-            w = len(lvl.tiles[0]) if h > 0 else 0
-            
-            # Place entrance door on left wall if this room has an entrance
-            if room.entrance_from:
-                entrance_y = h // 2
-                if 0 < entrance_y < h - 1 and 1 < w - 1:
-                    lvl.tiles[entrance_y][1] = TileType.DOOR_ENTRANCE.value
-            
-            # Place exit doors on right wall based on door_exits
-            if room.door_exits:
-                exit_y1 = h // 2 - 2
-                exit_y2 = h // 2 + 2
-                
-                if "door_exit_1" in room.door_exits and 0 < exit_y1 < h - 1:
-                    lvl.tiles[exit_y1][w - 2] = TileType.DOOR_EXIT_1.value
-                    
-                if "door_exit_2" in room.door_exits and 0 < exit_y2 < h - 1:
-                    lvl.tiles[exit_y2][w - 2] = TileType.DOOR_EXIT_2.value
+        # TODO: optional: convert room.door_exits into actual door tiles with on_interact_id
         
         self.level = lvl
         self.enemies = lvl.enemies
@@ -357,6 +326,21 @@ class Game:
             floating.clear()
         
 
+        
+        try:
+            # Use LegacyLevel for old static room system
+            lvl = LegacyLevel(room_index)
+        except Exception as e:
+
+            return
+        
+        self.level = lvl
+        self.enemies = lvl.enemies
+        
+        if not initial:
+            hitboxes.clear()
+            floating.clear()
+            
 
 
     def switch_room(self, delta: Optional[int] = None, target_room_id: Optional[str] = None):
@@ -1316,11 +1300,8 @@ class Game:
                 draw_text(self.screen, "!", (x + 124, y-6), (255,80,80), size=18, bold=True)
             y += 12
 
-        # show room info on HUD
-        if self.use_pcg and hasattr(self.level, 'room_code'):
-            draw_text(self.screen, f"PCG: {self.level.room_code}", (WIDTH-220, 8), WHITE, size=16)
-        else:
-            draw_text(self.screen, f"Room {self.level_index+1}/{ROOM_COUNT}", (WIDTH-220, 8), WHITE, size=16)
+        # show room info on HUD (static rooms only)
+        draw_text(self.screen, f"Room {self.level_index+1}/{ROOM_COUNT}", (WIDTH-220, 8), WHITE, size=16)
 
         # selected class
         draw_text(self.screen, f"Class: {getattr(self.player, 'cls', 'Unknown')}", (WIDTH-220, 28), (200,200,200), size=16)
@@ -1546,39 +1527,11 @@ class Game:
                         self.debug_tile_inspector = not self.debug_tile_inspector
                         continue
                     elif ev.key == pygame.K_F11:
-                        # PCG navigation: follow door_exit_1
-                        if self.use_pcg and hasattr(self.level, 'room_code'):
-                            from src.level.level_loader import level_loader
-                            room = level_loader.get_room(self.level.level_id, self.level.room_code)
-                            if room and room.door_exits and 'door_exit_1' in room.door_exits:
-                                target_code = room.door_exits['door_exit_1']
-                                # Parse target level and room from code like "11A"
-                                if len(target_code) >= 2:
-                                    target_level_id = int(target_code[:-1])
-                                    target_room_code = target_code
-                                    self._load_pcg_level(target_level_id, target_room_code, initial=False)
-                                    # Position player at spawn
-                                    sx, sy = self.level.spawn
-                                    self.player.rect.topleft = (sx, sy)
+                        # Reserved: previously procedural regen; now no-op
                         continue
                     elif ev.key == pygame.K_F12:
-                        if self.use_pcg and hasattr(self.level, 'room_code'):
-                            # PCG navigation: follow door_exit_2
-                            from src.level.level_loader import level_loader
-                            room = level_loader.get_room(self.level.level_id, self.level.room_code)
-                            if room and room.door_exits and 'door_exit_2' in room.door_exits:
-                                target_code = room.door_exits['door_exit_2']
-                                # Parse target level and room from code like "11A"
-                                if len(target_code) >= 2:
-                                    target_level_id = int(target_code[:-1])
-                                    target_room_code = target_code
-                                    self._load_pcg_level(target_level_id, target_room_code, initial=False)
-                                    # Position player at spawn
-                                    sx, sy = self.level.spawn
-                                    self.player.rect.topleft = (sx, sy)
-                        else:
-                            # Legacy: Teleport to room 6 (boss room) for debug
-                            self.goto_room(5)
+                        # Teleport to room 6 (boss room) for debug
+                        self.goto_room(5)
 
             if not self.inventory.inventory_open and not self.shop.shop_open:
                 self.update(dt)
@@ -1640,12 +1593,9 @@ class Game:
             {'label': "Enemy Nametags (F4)", 'type': 'toggle',
              'getter': lambda: self.debug_enemy_nametags,
              'setter': lambda v: setattr(self, 'debug_enemy_nametags', v)},
-{'label': "Infinite Mana", 'type': 'toggle',
-              'getter': lambda: self.cheat_infinite_mana,
-              'setter': lambda v: setattr(self, 'cheat_infinite_mana', v)},
-            {'label': "PCG Mode", 'type': 'toggle',
-              'getter': lambda: getattr(self, 'use_pcg', False),
-              'setter': lambda v: self._toggle_pcg(v)},
+            {'label': "Infinite Mana", 'type': 'toggle',
+             'getter': lambda: self.cheat_infinite_mana,
+             'setter': lambda v: setattr(self, 'cheat_infinite_mana', v)},
             {'label': "Zero Cooldown", 'type': 'toggle',
              'getter': lambda: self.cheat_zero_cooldown,
              'setter': lambda v: setattr(self, 'cheat_zero_cooldown', v)},
@@ -1816,8 +1766,7 @@ class Game:
         )
         
         if result:
-            self.interaction_prompt, interaction_x, interaction_y = result
-            self.interaction_position = (interaction_x, interaction_y)
+            self.interaction_prompt, self.interaction_position = result
         else:
             self.interaction_prompt = None
             self.interaction_position = None
