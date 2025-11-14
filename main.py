@@ -1732,8 +1732,14 @@ class Game:
                     if ev.key == pygame.K_F5:
                         self.inventory.inventory_open = False
                         self.inventory._clear_inventory_selection()
+                        # Clear pending KEYDOWN events to avoid immediate re-trigger in submenu
+                        try:
+                            pygame.event.clear(pygame.KEYDOWN)
+                        except Exception:
+                            pass
                         self.debug_menu()
                         continue
+
                     if self.inventory.inventory_open:
                         if ev.key == pygame.K_ESCAPE:
                             self.inventory.inventory_open = False
@@ -1774,9 +1780,6 @@ class Game:
                     elif ev.key == pygame.K_F4:
                         # toggle enemy nametags
                         self.debug_enemy_nametags = not self.debug_enemy_nametags
-                    elif ev.key == pygame.K_F5:
-                        # open debugger menu
-                        self.debug_menu()
                     elif ev.key == pygame.K_F6:
                         # Toggle shop
                         if not self.inventory.inventory_open:
@@ -1895,63 +1898,523 @@ class Game:
 
 
     def debug_menu(self):
+        """
+        Open the main Developer Tools menu as a tiled grid (PCG-style).
+        Uses arrow/WASD navigation; Enter to toggle/action; Esc/F5 to close.
+        """
         self.inventory.inventory_open = False
         self.inventory._clear_inventory_selection()
+
         options = [
-            {'label': "God Mode (F1)", 'type': 'toggle',
+            # Cheats
+            {'label': 'God Mode', 'type': 'toggle',
              'getter': lambda: getattr(self.player, 'god', False),
              'setter': lambda v: setattr(self.player, 'god', v)},
-            {'label': "No-clip Mode (F10)", 'type': 'toggle',
+            {'label': 'No-clip', 'type': 'toggle',
              'getter': lambda: getattr(self.player, 'no_clip', False),
              'setter': lambda v: setattr(self.player, 'no_clip', v)},
-            {'label': "Refill Consumables (F2)", 'type': 'action',
-             'action': self.inventory.add_all_consumables},
-            {'label': "Enemy Vision Rays (F3)", 'type': 'toggle',
-             'getter': lambda: self.debug_enemy_rays,
-             'setter': lambda v: setattr(self, 'debug_enemy_rays', v)},
-            {'label': "Enemy Nametags (F4)", 'type': 'toggle',
-             'getter': lambda: self.debug_enemy_nametags,
-             'setter': lambda v: setattr(self, 'debug_enemy_nametags', v)},
-            {'label': "Area Overlay (F10)", 'type': 'toggle',
-             'getter': lambda: self.debug_show_area_overlay,
-             'setter': lambda v: setattr(self, 'debug_show_area_overlay', v)},
-            {'label': "Overlay Opacity", 'type': 'info', 'getter': lambda: f"{self.debug_area_overlay_opacity:.2f}"},
-            {'label': "Increase Overlay Opacity", 'type': 'action', 'action': lambda: self._adjust_overlay_opacity(0.1)},
-            {'label': "Decrease Overlay Opacity", 'type': 'action', 'action': lambda: self._adjust_overlay_opacity(-0.1)},
- {'label': "Infinite Mana", 'type': 'toggle',
-               'getter': lambda: self.cheat_infinite_mana,
-               'setter': lambda v: setattr(self, 'cheat_infinite_mana', v)},
-            {'label': "PCG Mode", 'type': 'toggle',
-              'getter': lambda: getattr(self, 'use_pcg', False),
-              'setter': lambda v: self._toggle_pcg(v)},
-
-            {'label': "Zero Cooldown", 'type': 'toggle',
+            {'label': 'Infinite Mana', 'type': 'toggle',
+             'getter': lambda: self.cheat_infinite_mana,
+             'setter': lambda v: setattr(self, 'cheat_infinite_mana', v)},
+            {'label': 'Zero Cooldown', 'type': 'toggle',
              'getter': lambda: self.cheat_zero_cooldown,
              'setter': lambda v: setattr(self, 'cheat_zero_cooldown', v)},
-            {'label': "Teleport to Level...", 'type': 'action',
-             'action': self.debug_teleport_menu},
-            {'label': "Refill Consumables", 'type': 'action',
-             'action': self.inventory.add_all_consumables},
-            {'label': "Give Items...", 'type': 'action',
-             'action': self.debug_item_menu},
-            {'label': "Tile Inspector", 'type': 'toggle',
-             'getter': lambda: self.debug_tile_inspector,
-             'setter': lambda v: setattr(self, 'debug_tile_inspector', v)},
-            {'label': "Collision Boxes", 'type': 'toggle',
-             'getter': lambda: self.debug_collision_boxes,
-             'setter': lambda v: setattr(self, 'debug_collision_boxes', v)},
-            {'label': "Collision Log", 'type': 'toggle',
-             'getter': lambda: self.debug_collision_log,
-             'setter': lambda v: setattr(self, 'debug_collision_log', v)},
-            {'label': "Close", 'type': 'action',
-             'action': None, 'close': True},
+
+            # Visuals
+            {'label': 'Enemy Vision Rays', 'type': 'toggle',
+             'getter': lambda: self.debug_enemy_rays,
+             'setter': lambda v: setattr(self, 'debug_enemy_rays', v)},
+            {'label': 'Enemy Nametags', 'type': 'toggle',
+             'getter': lambda: self.debug_enemy_nametags,
+             'setter': lambda v: setattr(self, 'debug_enemy_nametags', v)},
+            {'label': 'Area Overlay', 'type': 'toggle',
+             'getter': lambda: self.debug_show_area_overlay,
+             'setter': lambda v: setattr(self, 'debug_show_area_overlay', v)},
+            {'label': 'Overlay Opacity', 'type': 'info', 'getter': lambda: f"{self.debug_area_overlay_opacity:.2f}"},
+            {'label': 'Increase Overlay Opacity', 'type': 'action', 'action': lambda: self._adjust_overlay_opacity(0.05)},
+            {'label': 'Decrease Overlay Opacity', 'type': 'action', 'action': lambda: self._adjust_overlay_opacity(-0.05)},
+
+            # Tools
+            {'label': 'Refill Consumables', 'type': 'action', 'action': self.inventory.add_all_consumables},
+            {'label': 'Give Items', 'type': 'action', 'action': self.debug_item_menu},
+
+            # PCG & Navigation
+            {'label': 'PCG Mode', 'type': 'toggle',
+             'getter': lambda: getattr(self, 'use_pcg', False),
+             'setter': lambda v: self._toggle_pcg(v)},
+            {'label': 'Teleport to Level/Room', 'type': 'action', 'action': self.debug_teleport_menu},
+
+            # Close
+            {'label': 'Close', 'type': 'action', 'action': None, 'close': True},
         ]
-        self._run_debug_option_menu(options, title="Debugger")
+
+        # Grid rendering helper for options (now uses fixed rows and dark palette)
+        def _draw_option_grid_overlay(options, selected_idx, rows=3, cols=None, title="Developer Tools", offset=0):
+            import math
+            total = len(options)
+            # If caller specified 'cols', honor it; otherwise compute cols from rows.
+            if cols is None:
+                cols = max(1, math.ceil(total / max(1, rows)))
+            else:
+                # Ensure rows is consistent with cols (rows = how many vertical cells we attempt per page)
+                rows = max(1, rows)
+
+            # derive alpha and draw overlay+panel on SRCALPHA surfaces to respect alpha properly
+            alpha = int(max(0.05, min(1.0, getattr(self, 'debug_area_overlay_opacity', 0.7))) * 220)
+            backdrop = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            backdrop.fill((12, 14, 20, alpha))
+            self.screen.blit(backdrop, (0, 0))
+
+            # cap panel size so it never overflows the screen
+            max_panel_w = min(780, WIDTH - 80)
+            max_panel_h = min(HEIGHT - 120, 520)
+            panel_w = min(640, max_panel_w)
+            panel_h = min(420, max_panel_h)
+            panel_x = (WIDTH - panel_w) // 2
+            panel_y = (HEIGHT - panel_h) // 2
+
+            # Panel shadow + body (dark theme)
+            shadow_surf = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+            shadow_surf.fill((0, 0, 0, 180))
+            self.screen.blit(shadow_surf, (panel_x + 6, panel_y + 8))
+
+            panel_surf = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+            panel_surf.fill((22, 24, 30, max(80, alpha)))
+            pygame.draw.rect(panel_surf, (80, 80, 90), pygame.Rect(0, 0, panel_w, panel_h), width=1, border_radius=14)
+            self.screen.blit(panel_surf, (panel_x, panel_y))
+
+            # header band with subtle accent (similar to PCG palette)
+            header = pygame.Rect(panel_x, panel_y, panel_w, 64)
+            pygame.draw.rect(self.screen, (44, 46, 72), header, border_radius=14)
+            draw_text(self.screen, title, (panel_x + 22, panel_y + 14), (230, 230, 240), size=22, bold=True)
+            draw_text(self.screen, f"Options: {total}", (panel_x + panel_w - 160, panel_y + 18), (190,190,200), size=16)
+
+            # Grid area inside panel
+            grid_x = panel_x + 24
+            grid_y = panel_y + 86
+            grid_w = panel_w - 48
+            grid_h = panel_h - 120
+            spacing = 12
+
+            # compute cell sizes for columns/rows (use provided rows as vertical count per page)
+            cell_w = max(120, (grid_w - (cols - 1) * spacing) // cols)
+            cell_h = max(64, (grid_h - (rows - 1) * spacing) // max(1, rows))
+            cell_h = min(120, cell_h)
+
+            # page sizing
+            page_size = rows * cols
+            # subset of options to render for current page
+            subset = options[offset:offset + page_size]
+
+            # center grid vertically if there's extra space
+            used_h = rows * cell_h + (rows - 1) * spacing
+            start_y = grid_y + max(0, (grid_h - used_h) // 2)
+
+            # small helpers
+            def _ellipsize(text, font, max_w):
+                try:
+                    if font.render(text, True, (0,0,0)).get_width() <= max_w:
+                        return text
+                except Exception:
+                    return text
+                base = text
+                while base and font.render(base + '...', True, (0,0,0)).get_width() > max_w:
+                    base = base[:-1]
+                return base + '...'
+
+            def _text_for_bg(rgb):
+                r,g,b = rgb
+                lum = 0.299*r + 0.587*g + 0.114*b
+                return (0,0,0) if lum > 160 else (255,255,255)
+
+            # Draw cells in row-major order for the subset
+            for i, opt in enumerate(subset):
+                global_idx = offset + i
+                r = i // cols
+                c = i % cols
+                cx = grid_x + c * (cell_w + spacing)
+                cy = start_y + r * (cell_h + spacing)
+                cell = pygame.Rect(cx, cy, cell_w, cell_h)
+
+                # Use darker, higher-contrast cell colors for readability
+                default_pastel = (44, 48, 56)
+                selected_pastel = (70, 110, 150)
+                is_selected = (global_idx == selected_idx)
+                cell_fill = selected_pastel if is_selected else default_pastel
+                pygame.draw.rect(self.screen, cell_fill, cell, border_radius=8)
+
+                # determine text color for contrast
+                def text_for_bg(rgb):
+                    r,g,b = rgb
+                    lum = 0.299*r + 0.587*g + 0.114*b
+                    return (0,0,0) if lum > 160 else (255,255,255)
+                text_color = text_for_bg(cell_fill)
+
+                # Label (ellipsize to avoid clipping) — larger and moved slightly down
+                label = _ellipsize(opt.get('label', ''), self.font_small, cell_w - 28)
+                draw_text(self.screen, label, (cell.x + 12, cell.y + 14), text_color, size=18)
+
+                # Right status for toggles/info: draw a prominent pill for toggles centered vertically
+                if opt.get('type') == 'toggle':
+                    try:
+                        state_on = bool(opt['getter']())
+                    except Exception:
+                        state_on = False
+                    pill_w, pill_h = 64, 26
+                    pill_x = cell.right - pill_w - 12
+                    pill_y = cell.y + (cell_h - pill_h)//2
+                    pill_rect = pygame.Rect(pill_x, pill_y, pill_w, pill_h)
+                    if state_on:
+                        pygame.draw.rect(self.screen, (80,200,120), pill_rect, border_radius=14)
+                        draw_text(self.screen, 'ON', (pill_x + 18, pill_y + 4), (8,12,10), size=16, bold=True)
+                    else:
+                        pygame.draw.rect(self.screen, (80,80,90), pill_rect, border_radius=14)
+                        draw_text(self.screen, 'OFF', (pill_x + 16, pill_y + 4), (200,200,210), size=16, bold=True)
+                elif opt.get('type') == 'info':
+                    try:
+                        right_text = str(opt['getter']())
+                    except Exception:
+                        right_text = 'ERR'
+                    if right_text:
+                        rt_w = self.font_small.render(right_text, True, text_color).get_width()
+                        draw_text(self.screen, right_text, (cell.right - rt_w - 12, cell.y + 14), text_color, size=14)
+
+                # Kind tag (muted for dark background)
+                kt = opt.get('type', '')
+                if kt == 'toggle':
+                    ktcol = (54, 70, 60)
+                elif kt == 'action':
+                    ktcol = (60, 64, 88)
+                else:
+                    ktcol = (64,64,64)
+                kind_rect = pygame.Rect(cell.right - 96, cell.y + cell_h - 32, 86, 22)
+                pygame.draw.rect(self.screen, ktcol, kind_rect, border_radius=6)
+                kcol = (240,240,240)
+                draw_text(self.screen, kt.upper(), (kind_rect.x + 10, kind_rect.y + 2), kcol, size=12)
+
+            # Page indicator
+            page_num = (offset // page_size) + 1
+            total_pages = max(1, (total + page_size - 1) // page_size)
+            draw_text(self.screen, f"Page {page_num}/{total_pages}", (panel_x + panel_w - 160, panel_y + 46), (180,180,200), size=14)
+
+            draw_text(self.screen, "Use Arrows/WASD to navigate • Enter = Toggle/Run • Esc = Close", (panel_x + 22, panel_y + panel_h - 38), (220,220,230), size=15)
+
+
+
+        # Interactive loop for grid with paging (scrollable)
+        cols = 3
+        rows = 3
+        idx = 0
+        offset = 0
+        total = len(options)
+        page_size = rows * cols
+        while True:
+            dt = self.clock.tick(FPS) / 1000.0
+            total = len(options)
+            idx = max(0, min(idx, total - 1))
+            # ensure offset keeps selected in current page
+            offset = (idx // page_size) * page_size
+
+            for ev in pygame.event.get():
+                if ev.type == pygame.QUIT:
+                    pygame.quit(); sys.exit()
+                elif ev.type == pygame.KEYDOWN:
+                    if ev.key in (pygame.K_ESCAPE, pygame.K_F5):
+                        return
+                    elif ev.key in (pygame.K_LEFT, pygame.K_a):
+                        idx = (idx - 1) % total
+                    elif ev.key in (pygame.K_RIGHT, pygame.K_d):
+                        idx = (idx + 1) % total
+                    elif ev.key in (pygame.K_UP, pygame.K_w):
+                        # move up by one row
+                        idx = (idx - cols) % total
+                    elif ev.key in (pygame.K_DOWN, pygame.K_s):
+                        # move down by one row
+                        idx = (idx + cols) % total
+                    elif ev.key == pygame.K_PAGEUP:
+                        # previous page
+                        offset = max(0, offset - page_size)
+                        idx = offset
+                    elif ev.key == pygame.K_PAGEDOWN:
+                        # next page
+                        offset = min(max(0, total - page_size), offset + page_size)
+                        idx = offset
+                    elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+                        opt = options[idx]
+                        if opt.get('type') == 'toggle':
+                            try:
+                                opt['setter'](not opt['getter']())
+                            except Exception:
+                                pass
+                        elif opt.get('type') == 'action' and opt.get('action'):
+                            try:
+                                opt['action']()
+                            except Exception:
+                                pass
+                        if opt.get('close'):
+                            return
+
+            self.draw()
+            _draw_option_grid_overlay(options, idx, rows=rows, cols=cols, title="Developer Tools", offset=offset)
+            pygame.display.flip()
 
     def debug_item_menu(self):
+        """
+        Give Items debug submenu (grid view).
+
+        Presents available gear and consumables in a tiled grid similar to the PCG
+        teleport UI. Navigation: arrow keys (or WASD). Enter to give/equip. Esc/F5 to close.
+        """
         self.inventory.inventory_open = False
         self.inventory._clear_inventory_selection()
-        options = []
+
+        def _msg(text, color=(160,220,255)):
+            try:
+                floating.append(DamageNumber(self.player.rect.centerx, self.player.rect.top - 12, text, color))
+            except Exception:
+                pass
+
+        def build_items_list():
+            """Return a list of item dicts: {'key', 'name', 'action', 'obj', 'kind'}"""
+            items = []
+            try:
+                gear_keys = sorted(list(self.inventory.armament_catalog.keys()))
+            except Exception:
+                gear_keys = []
+            try:
+                consumable_keys = sorted(list(self.inventory.consumable_catalog.keys()))
+            except Exception:
+                consumable_keys = []
+
+            # Filter out owned gear
+            try:
+                owned = set(self.inventory.armament_order or [])
+                gear_keys = [k for k in gear_keys if k not in owned]
+            except Exception:
+                pass
+
+            # Filter consumables at cap
+            try:
+                cap = getattr(self.inventory, 'MAX_CONSUMABLE_SLOT_STACK', 20)
+                consumable_keys = [k for k in consumable_keys if self.inventory._total_available_count(k) < cap]
+            except Exception:
+                pass
+
+            # Add gear entries
+            for k in gear_keys:
+                obj = self.inventory.armament_catalog.get(k)
+                def make_action(key, obj=obj):
+                    def action():
+                        try:
+                            self.inventory._force_equip_armament(key)
+                            _msg(f"Equipped: {getattr(obj, 'name', key)}", (200,220,160))
+                        except Exception:
+                            _msg("Failed to equip", (255,120,120))
+                    return action
+                items.append({'key': k, 'name': getattr(self.inventory.armament_catalog.get(k), 'name', k), 'action': make_action(k), 'obj': self.inventory.armament_catalog.get(k), 'kind': 'gear'})
+
+            # Add consumable entries
+            for k in consumable_keys:
+                obj = self.inventory.consumable_catalog.get(k)
+                def make_action(key, obj=obj):
+                    def action():
+                        try:
+                            added = self.inventory.add_consumable(key, 1)
+                            if added > 0:
+                                _msg(f"Added x{added}: {getattr(obj, 'name', key)}", (160,255,180))
+                            else:
+                                stored = self.inventory.add_consumable_to_storage(key, 1)
+                                if stored > 0:
+                                    _msg(f"Stored x{stored}: {getattr(obj, 'name', key)}", (180,220,255))
+                                else:
+                                    _msg("Inventory Full", (255,180,120))
+                        except Exception:
+                            _msg("Failed to add", (255,120,120))
+                    return action
+                items.append({'key': k, 'name': getattr(obj, 'name', k), 'action': make_action(k), 'obj': obj, 'kind': 'consumable'})
+
+            # Close entry as last
+            items.append({'key': '__CLOSE__', 'name': 'Close', 'action': None, 'obj': None, 'kind': 'control'})
+            return items
+
+        # Grid drawing helper (supports paging)
+        def _draw_item_grid_overlay(items, selected_idx, cols=3, title="Give Items", offset=0, rows=None):
+            total = len(items)
+            if rows is None:
+                rows = max(1, (total + cols - 1) // cols)
+
+            # Use overlay alpha from config so opacity controls have immediate effect
+            alpha = int(max(0.05, min(1.0, getattr(self, 'debug_area_overlay_opacity', 0.7))) * 220)
+            overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
+            overlay.fill((12,14,20,alpha))
+            self.screen.blit(overlay, (0,0))
+
+            panel_w, panel_h = 700, 480
+            panel_x = (WIDTH - panel_w) // 2
+            panel_y = (HEIGHT - panel_h) // 2
+            shadow = pygame.Rect(panel_x + 6, panel_y + 8, panel_w, panel_h)
+            pygame.draw.rect(self.screen, (0,0,0, max(60, alpha-20)), shadow, border_radius=14)
+            panel = pygame.Rect(panel_x, panel_y, panel_w, panel_h)
+            pygame.draw.rect(self.screen, (26,28,36, max(80, alpha)), panel, border_radius=14)
+            pygame.draw.rect(self.screen, (140,140,150), panel, width=1, border_radius=14)
+
+            # Header
+            header = pygame.Rect(panel.x, panel.y, panel.width, 64)
+            pygame.draw.rect(self.screen, (50,50,70, max(100, alpha)), header, border_radius=14)
+            draw_text(self.screen, title, (panel.x + 22, panel.y + 14), (245,245,250), size=22, bold=True)
+            draw_text(self.screen, f"Items: {total-1}", (panel.right - 180, panel.y + 18), (200,200,210), size=16)
+
+            # Compute grid area
+            grid_x = panel.x + 24
+            grid_y = panel.y + 86
+            grid_w = panel.width - 48
+            grid_h = panel.height - 120
+
+            spacing = 12
+            # Larger default cells for better readability
+            cell_w = max(140, (grid_w - (cols - 1) * spacing) // cols)
+            cell_h = int(cell_w * 0.95)
+            cell_h = min(cell_h, 180)
+
+            # compute rows per page if not provided
+            page_rows = rows
+            page_size = page_rows * cols
+
+            # subset for this page
+            subset = items[offset:offset + page_size]
+
+            # Ensure grid fits vertically: shrink if necessary to avoid clipping bottom
+            used_h = page_rows * cell_h + (page_rows - 1) * spacing
+            if used_h > grid_h:
+                cell_h = max(56, (grid_h - (page_rows - 1) * spacing) // max(1, page_rows))
+                used_h = page_rows * cell_h + (page_rows - 1) * spacing
+
+            start_y = grid_y + max(0, (grid_h - used_h) // 2)
+
+            # small helper to ellipsize long names to fit cell width
+            def _ellipsize(text, font, max_w):
+                if font.render(text, True, (0,0,0)).get_width() <= max_w:
+                    return text
+                base = text
+                while base and font.render(base + '...', True, (0,0,0)).get_width() > max_w:
+                    base = base[:-1]
+                return base + '...'
+
+            for i, it in enumerate(subset):
+                r = i // cols
+                c = i % cols
+                cx = grid_x + c * (cell_w + spacing)
+                cy = start_y + r * (cell_h + spacing)
+                cell_rect = pygame.Rect(cx, cy, cell_w, cell_h)
+
+                # Use darker, higher-contrast cell colors for readability
+                default_pastel = (44, 48, 56)
+                selected_pastel = (70, 110, 150)
+                is_selected = ((offset + i) == selected_idx)
+                cell_fill = selected_pastel if is_selected else default_pastel
+                pygame.draw.rect(self.screen, cell_fill, cell_rect, border_radius=8)
+
+                # Icon circle (use object's color if available)
+                icon_r = min(36, max(20, cell_h // 4))
+                icon_cx = cell_rect.x + 16 + icon_r
+                icon_cy = cell_rect.y + 16 + icon_r
+                color = (120,120,140)
+                try:
+                    obj = it.get('obj')
+                    if obj and getattr(obj, 'color', None):
+                        color = getattr(obj, 'color')
+                except Exception:
+                    pass
+                pygame.draw.circle(self.screen, color, (icon_cx, icon_cy), icon_r)
+                # Icon letter (light for dark bg)
+                icon_letter = ''
+                try:
+                    icon_letter = getattr(it.get('obj'), 'icon_letter', '') or (it.get('key') or '')[:1].upper()
+                except Exception:
+                    icon_letter = (it.get('key') or '')[:1].upper()
+                draw_text(self.screen, icon_letter, (icon_cx - 8, icon_cy - 12), (245,245,250), size=22, bold=True)
+
+                # Name (ellipsize to avoid overflow) - light text for dark bg
+                name = it.get('name') or it.get('key')
+                name = _ellipsize(name, self.font_small, cell_w - 28)
+                draw_text(self.screen, name, (cell_rect.x + 12, cell_rect.y + cell_h - 34), (235,235,240), size=16)
+
+                # Kind tag (muted dark tag with light text)
+                kind = it.get('kind', '')
+                if kind == 'gear':
+                    tag_col = (80,72,64)
+                elif kind == 'consumable':
+                    tag_col = (54,90,60)
+                else:
+                    tag_col = (64,64,64)
+                tag_rect = pygame.Rect(cell_rect.right - 78, cell_rect.y + 8, 64, 20)
+                pygame.draw.rect(self.screen, tag_col, tag_rect, border_radius=6)
+                draw_text(self.screen, kind.upper(), (tag_rect.x + 6, tag_rect.y + 2), (240,240,240), size=12)
+
+                # Selection outline
+                if is_selected:
+                    try:
+                        pygame.draw.rect(self.screen, (80,150,220), cell_rect.inflate(6,6), width=3, border_radius=10)
+                    except Exception:
+                        pygame.draw.rect(self.screen, (80,150,220), cell_rect.inflate(6,6), width=3)
+
+            # Page indicator
+            page_num = (offset // page_size) + 1
+            total_pages = max(1, (total + page_size - 1) // page_size)
+            draw_text(self.screen, f"Page {page_num}/{total_pages}", (panel_x + panel_w - 160, panel_y + 46), (180,180,200), size=14)
+
+            draw_text(self.screen, "Arrow keys / WASD = Move • Enter = Give/Equip • Esc = Close • PgUp/PgDn to scroll", (panel.x + 22, panel.bottom - 34), (180,190,200), size=14)
+
+        # Interactive grid loop (paging)
+        cols = 4
+        rows = 3
+        idx = 0
+        offset = 0
+        while True:
+            dt = self.clock.tick(FPS) / 1000.0
+            items = build_items_list()
+            total = len(items)
+            if total == 0:
+                return
+            page_size = rows * cols
+            idx = max(0, min(idx, total - 1))
+            # ensure offset keeps selected in current page
+            offset = (idx // page_size) * page_size
+
+            for ev in pygame.event.get():
+                if ev.type == pygame.QUIT:
+                    pygame.quit(); sys.exit()
+                elif ev.type == pygame.KEYDOWN:
+                    if ev.key in (pygame.K_ESCAPE, pygame.K_F5):
+                        return
+                    elif ev.key in (pygame.K_LEFT, pygame.K_a):
+                        idx = (idx - 1) % total
+                    elif ev.key in (pygame.K_RIGHT, pygame.K_d):
+                        idx = (idx + 1) % total
+                    elif ev.key in (pygame.K_UP, pygame.K_w):
+                        idx = (idx - cols) % total
+                    elif ev.key in (pygame.K_DOWN, pygame.K_s):
+                        idx = (idx + cols) % total
+                    elif ev.key == pygame.K_PAGEUP:
+                        offset = max(0, offset - page_size)
+                        idx = offset
+                    elif ev.key == pygame.K_PAGEDOWN:
+                        offset = min(max(0, total - page_size), offset + page_size)
+                        idx = offset
+                    elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
+                        it = items[idx]
+                        if it.get('kind') == 'control' and it.get('key') == '__CLOSE__':
+                            return
+                        act = it.get('action')
+                        if act:
+                            try:
+                                act()
+                            except Exception:
+                                pass
+
+            self.draw()
+            _draw_item_grid_overlay(items, idx, cols=cols, title="Give Items", offset=offset, rows=rows)
+            pygame.display.flip()
 
     def _adjust_overlay_opacity(self, delta: float):
         """Adjust area overlay opacity by delta and clamp between 0.0 and 1.0."""
@@ -1967,47 +2430,93 @@ class Game:
     def _draw_debug_overlay(self, options, selected, title="Debugger", offset=0, visible=9):
         """Draw the debug option overlay once (non-recursive).
 
-        This function assumes the caller already rendered the game underneath
-        (via `self.draw()`). It only renders the translucent overlay and the
-        options panel on top — it does not recurse or flip the display.
+        This overlay supports a new 'section' entry type which renders as a
+        non-selectable header. Toggle/info/action entries render as rows.
         """
         overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
         overlay.fill((0, 0, 0, 180))
         self.screen.blit(overlay, (0, 0))
-        panel = pygame.Rect(WIDTH//2 - 220, HEIGHT//2 - 200, 440, 360)
-        pygame.draw.rect(self.screen, (32, 30, 42), panel, border_radius=12)
-        pygame.draw.rect(self.screen, (210, 200, 170), panel, width=2, border_radius=12)
-        draw_text(self.screen, title, (panel.x + 24, panel.y + 16), (240,220,190), size=28, bold=True)
-        info = "Arrows = Navigate | Enter = Toggle | Esc/F5 = Close"
-        draw_text(self.screen, info, (panel.x + 24, panel.bottom - 32), (180,180,200), size=16)
-        line_h = 34
+        panel = pygame.Rect(WIDTH//2 - 260, HEIGHT//2 - 220, 520, 440)
+        pygame.draw.rect(self.screen, (28, 28, 36), panel, border_radius=12)
+        pygame.draw.rect(self.screen, (140, 140, 150), panel, width=1, border_radius=12)
+
+        # Title band
+        title_band = pygame.Rect(panel.x, panel.y, panel.width, 64)
+        pygame.draw.rect(self.screen, (40, 40, 48), title_band, border_radius=12)
+        draw_text(self.screen, title, (panel.x + 24, panel.y + 16), (245,245,245), size=28, bold=True)
+        info = "Arrows = Navigate | Enter = Activate | Esc/F5 = Close"
+        draw_text(self.screen, info, (panel.x + 24, panel.bottom - 32), (190,190,200), size=14)
+
+        line_h = 36
         visible = max(1, visible)
         subset = options[offset:offset+visible]
+
         for i, opt in enumerate(subset):
-            row = pygame.Rect(panel.x + 24, panel.y + 64 + i * line_h, panel.width - 48, 30)
-            bg_col = (70, 70, 90) if (offset + i) == selected else (50, 50, 68)
+            global_idx = offset + i
+            y = panel.y + 80 + i * line_h
+
+            if opt.get('type') == 'section':
+                # Section header (non-selectable)
+                hdr_rect = pygame.Rect(panel.x + 20, y, panel.width - 40, line_h - 6)
+                pygame.draw.rect(self.screen, (36,36,44), hdr_rect, border_radius=6)
+                draw_text(self.screen, str(opt.get('label', '')).upper(), (hdr_rect.x + 10, hdr_rect.y + 6), (200,200,220), size=16, bold=True)
+                # small separator line
+                pygame.draw.line(self.screen, (60,60,70), (hdr_rect.x, hdr_rect.y + hdr_rect.height + 6), (hdr_rect.right, hdr_rect.y + hdr_rect.height + 6), 1)
+                continue
+
+            row = pygame.Rect(panel.x + 20, y, panel.width - 40, line_h - 6)
+            is_selected = (global_idx == selected)
+            bg_col = (70, 70, 90) if is_selected else (48, 48, 60)
             pygame.draw.rect(self.screen, bg_col, row, border_radius=8)
-            text = opt['label']
-            if opt['type'] == 'toggle':
+
+            text = opt.get('label', '')
+            if opt.get('type') == 'toggle':
                 try:
                     state = 'ON' if opt['getter']() else 'OFF'
                 except Exception:
                     state = 'ERR'
-                text = f"{text}: {state}"
-            elif opt['type'] == 'info':
+                right_text = state
+            elif opt.get('type') == 'info':
                 try:
-                    val = opt['getter']()
+                    right_text = str(opt['getter']())
                 except Exception:
-                    val = 'ERR'
-                text = f"{text}: {val}"
-            elif opt['type'] == 'action' and not opt.get('close'):
-                text = f"{text}"
-            draw_text(self.screen, text, (row.x + 12, row.y + 8), (220,220,230), size=18)
+                    right_text = 'ERR'
+            else:
+                right_text = ''
+
+            # Left label and optional right-aligned status
+            draw_text(self.screen, text, (row.x + 12, row.y + 6), (230,230,230), size=18)
+            if right_text:
+                # draw right-aligned status
+                rt_w = self.font_small.render(right_text, True, (220,220,220)).get_width()
+                draw_text(self.screen, right_text, (row.right - rt_w - 8, row.y + 6), (200,200,220), size=16)
+
+            # Highlight selection with a rounded box outline
+            if is_selected:
+                try:
+                    pygame.draw.rect(self.screen, (120,200,255), row, width=2, border_radius=8)
+                except Exception:
+                    # Fallback: draw simple rect if rounded rect unsupported
+                    pygame.draw.rect(self.screen, (120,200,255), row, width=2)
+
         # Do not call self.draw() or recurse here — caller manages game draw and display flip.
         return
 
     def _run_debug_option_menu(self, options, title="Debugger"):
-        idx = 0
+        """Run the debug menu input loop. Non-selectable 'section' entries are skipped."""
+        # Helper to find nearest selectable index (direction: +1 or -1)
+        def find_selectable(start_idx, direction):
+            if not options:
+                return 0
+            n = len(options)
+            idx = start_idx % n
+            for _ in range(n):
+                if options[idx].get('type') != 'section':
+                    return idx
+                idx = (idx + direction) % n
+            return start_idx % n
+
+        idx = find_selectable(0, 1)
         offset = 0
         visible = min(9, len(options)) or 1
         while True:
@@ -2019,21 +2528,33 @@ class Game:
                     if ev.key in (pygame.K_ESCAPE, pygame.K_F5):
                         return
                     elif ev.key in (pygame.K_UP, pygame.K_w):
-                        idx = (idx - 1) % len(options)
+                        # move to previous selectable
+                        prev = (idx - 1) % len(options)
+                        idx = find_selectable(prev, -1)
                     elif ev.key in (pygame.K_DOWN, pygame.K_s):
-                        idx = (idx + 1) % len(options)
+                        nxt = (idx + 1) % len(options)
+                        idx = find_selectable(nxt, 1)
                     elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
                         opt = options[idx]
-                        if opt['type'] == 'toggle':
-                            opt['setter'](not opt['getter']())
-                        elif opt['type'] == 'action' and opt['action']:
-                            opt['action']()
+                        if opt.get('type') == 'toggle':
+                            try:
+                                opt['setter'](not opt['getter']())
+                            except Exception:
+                                pass
+                        elif opt.get('type') == 'action' and opt.get('action'):
+                            try:
+                                opt['action']()
+                            except Exception:
+                                pass
                         if opt.get('close'):
                             return
+
+            # Ensure offset keeps selected in view
             if idx < offset:
                 offset = idx
             elif idx >= offset + visible:
                 offset = idx - visible + 1
+
             self.draw()
             self._draw_debug_overlay(options, idx, title=title, offset=offset, visible=visible)
             pygame.display.flip()
