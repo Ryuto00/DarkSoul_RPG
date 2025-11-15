@@ -734,9 +734,13 @@ class Player:
             self.coyote = COYOTE_FRAMES
             self.double_jumps = DOUBLE_JUMPS + int(getattr(self, 'extra_jump_charges', 0))
             self.can_dash = True if self.dash_cd == 0 else self.can_dash
+            # FIXED: Reset all wall jump related states when landing on ground
             if self.wall_jump_state is not None:
                 self.wall_jump_state = None
                 self.wall_jump_direction = 0
+            self.wall_sliding = False
+            self.wall_jump_coyote_timer = 0
+            self.wall_jump_buffer_timer = 0
         else:
             self.coyote = max(0, self.coyote-1)
 
@@ -752,8 +756,12 @@ class Player:
         if self.wall_reattach_timer > 0:
             self.wall_reattach_timer -= 1
 
+        # CRITICAL FIX: Check wall sliding state BEFORE processing jumps
+        # This ensures we know if player is actually in a wall slide state
         self.wall_sliding = False
-        if not self.on_ground and self.wall_jump_cooldown == 0:
+        # FIXED: Add proper wall jump conditions - player must be in the air and falling/moving downward
+        is_actually_in_air = not self.on_ground and (self.vy >= 0 or self.coyote < COYOTE_FRAMES - 2)
+        if is_actually_in_air and self.wall_jump_cooldown == 0:
             if self.on_left_wall or self.on_right_wall:
                 self.wall_sliding = True
                 self.wall_jump_coyote_timer = WALL_JUMP_COYOTE_TIME
@@ -764,7 +772,14 @@ class Player:
         jump_mult = getattr(self, 'jump_force_multiplier', 1.0)
         if want_jump:
             did = False
-            if self.wall_sliding or self.wall_jump_coyote_timer > 0:
+            # CRITICAL FIX: Priority order - check GROUND jump first, then wall jump
+            # This prevents wall jumps when player is actually on ground
+            if self.on_ground or self.coyote > 0:
+                # Normal ground jump (or coyote time jump)
+                self.vy = PLAYER_JUMP_V * jump_mult
+                did = True
+            # FIXED: Only allow wall jump when actually sliding or just left wall (coyote time) AND not on ground
+            elif (self.wall_sliding or self.wall_jump_coyote_timer > 0) and not self.on_ground:
                 if self.wall_jump_cooldown == 0:
                     if self.on_left_wall:
                         self.wall_jump_direction = 1
@@ -787,9 +802,6 @@ class Player:
                     self.vy = PLAYER_JUMP_V * jump_mult
                     self.double_jumps -= 1
                     did = True
-            elif self.on_ground or self.coyote > 0:
-                self.vy = PLAYER_JUMP_V * jump_mult
-                did = True
             elif self.double_jumps > 0:
                 self.vy = PLAYER_JUMP_V * jump_mult
                 self.double_jumps -= 1
@@ -932,17 +944,19 @@ class Player:
                 self.on_left_wall = False
                 self.on_right_wall = False
 
-                # Check for wall proximity even in no-clip mode (for wall jumps)
-                expanded_rect = self.rect.inflate(2, 0)  # Expand horizontally by 1 pixel each side
-                for s in level.solids:
-                    if expanded_rect.colliderect(s):
-                        # Determine which side the wall is on
-                        if self.rect.centerx < s.centerx:  # Wall is to the right
-                            if abs(self.rect.right - s.left) <= 2:  # Within 2 pixels
-                                self.on_right_wall = True
-                        else:  # Wall is to the left
-                            if abs(self.rect.left - s.right) <= 2:  # Within 2 pixels
-                                self.on_left_wall = True
+                # FIXED: Check for wall proximity even in no-clip mode (for wall jumps)
+                # But only when not on ground and actually falling to prevent false wall detection
+                if not self.on_ground and (self.vy >= 0 or self.coyote < COYOTE_FRAMES - 2):
+                    expanded_rect = self.rect.inflate(2, 0)  # Expand horizontally by 1 pixel each side
+                    for s in level.solids:
+                        if expanded_rect.colliderect(s):
+                            # Determine which side the wall is on
+                            if self.rect.centerx < s.centerx:  # Wall is to the right
+                                if abs(self.rect.right - s.left) <= 2:  # Within 2 pixels
+                                    self.on_right_wall = True
+                            else:  # Wall is to the left
+                                if abs(self.rect.left - s.right) <= 2:  # Within 2 pixels
+                                    self.on_left_wall = True
 
                 # Simulate ground detection for jumping purposes
                 # Check if there's ground below the player
@@ -995,20 +1009,22 @@ class Player:
                         self.on_left_wall = True
                 self.vx = 0
 
-        # Additional wall check - check if player is touching wall even without horizontal movement
-        # This helps maintain wall contact during sliding
-        if not self.on_left_wall and not self.on_right_wall and self.wall_reattach_timer == 0:
-            # Check a slightly expanded rect to detect wall proximity
-            expanded_rect = self.rect.inflate(2, 0)  # Expand horizontally by 1 pixel each side
-            for s in level.solids:
-                if expanded_rect.colliderect(s):
-                    # Determine which side the wall is on
-                    if self.rect.centerx < s.centerx:  # Wall is to the right
-                        if abs(self.rect.right - s.left) <= 2:  # Within 2 pixels
-                            self.on_right_wall = True
-                    else:  # Wall is to the left
-                        if abs(self.rect.left - s.right) <= 2:  # Within 2 pixels
-                            self.on_left_wall = True
+        # FIXED: Improved wall detection - only detect walls when player is actually in the air
+        # This prevents false wall detection when standing on ground next to walls
+        if not self.on_left_wall and not self.on_right_wall and self.wall_reattach_timer == 0 and not self.on_ground:
+            # Additional safety check: ensure player is actually falling (vy >= 0) or has been off ground for a few frames
+            if self.vy >= 0 or self.coyote < COYOTE_FRAMES - 2:
+                # Check a slightly expanded rect to detect wall proximity
+                expanded_rect = self.rect.inflate(2, 0)  # Expand horizontally by 1 pixel each side
+                for s in level.solids:
+                    if expanded_rect.colliderect(s):
+                        # Determine which side the wall is on
+                        if self.rect.centerx < s.centerx:  # Wall is to the right
+                            if abs(self.rect.right - s.left) <= 2:  # Within 2 pixels
+                                self.on_right_wall = True
+                        else:  # Wall is to the left
+                            if abs(self.rect.left - s.right) <= 2:  # Within 2 pixels
+                                self.on_left_wall = True
 
 
         # Vertical movement and collision
@@ -1045,6 +1061,40 @@ class Player:
             col = ACCENT if not self.iframes_flash else (ACCENT[0], ACCENT[1], 80)
 
         pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=4)
+        
+        # DEBUG: Draw wall jump state indicators (remove in production)
+        if getattr(self, '_debug_wall_jump', False):
+            font = pygame.font.Font(None, 16)
+            y_offset = 0
+            
+            # Ground state
+            ground_text = f"Ground: {self.on_ground}"
+            text_surf = font.render(ground_text, True, (255, 255, 255))
+            surf.blit(text_surf, (10, 10 + y_offset))
+            y_offset += 20
+            
+            # Wall state
+            wall_text = f"LWall: {self.on_left_wall} RWall: {self.on_right_wall}"
+            text_surf = font.render(wall_text, True, (255, 255, 255))
+            surf.blit(text_surf, (10, 10 + y_offset))
+            y_offset += 20
+            
+            # Wall sliding state
+            slide_text = f"Sliding: {self.wall_sliding}"
+            text_surf = font.render(slide_text, True, (255, 255, 255))
+            surf.blit(text_surf, (10, 10 + y_offset))
+            y_offset += 20
+            
+            # Jump buffer
+            buffer_text = f"JumpBuf: {self.jump_buffer}"
+            text_surf = font.render(buffer_text, True, (255, 255, 255))
+            surf.blit(text_surf, (10, 10 + y_offset))
+            y_offset += 20
+            
+            # Coyote time
+            coyote_text = f"Coyote: {self.coyote}"
+            text_surf = font.render(coyote_text, True, (255, 255, 255))
+            surf.blit(text_surf, (10, 10 + y_offset))
 
     def _find_safe_position(self, level):
         """Find the nearest safe position where the player won't be stuck in a wall"""

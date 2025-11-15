@@ -235,6 +235,13 @@ class InputHandler:
                             game.debug_tile_inspector = not getattr(game, 'debug_tile_inspector', False)
                             continue
 
+                        elif ev.key == pygame.K_F9:
+                            game.debug_wall_jump = not getattr(game, 'debug_wall_jump', False)
+                            # Set debug flag on player
+                            if hasattr(game, 'player'):
+                                game.player._debug_wall_jump = game.debug_wall_jump
+                            continue
+
                         elif ev.key == pygame.K_F11:
                             try:
                                 if getattr(game, 'use_pcg', False) and hasattr(game.level, 'room_code'):

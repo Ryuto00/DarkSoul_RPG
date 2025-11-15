@@ -107,6 +107,9 @@ class Game:
         self.debug_grid_position = False
         self.mouse_grid_pos = None
         self.mouse_world_pos = None
+        
+        # Wall jump debug
+        self.debug_wall_jump = False
 
         # Double spacebar detection for no-clip toggle
         self.last_space_time = 0
