@@ -342,6 +342,8 @@ class Game:
                 self.spawn = [100, 100]  # Will be overwritten
                 self.solids = []
                 self.doors = []
+                self.w = 0  # Level width in tiles
+                self.h = 0  # Level height in tiles
                 
                 # Initialize tile collision system
                 from src.tiles.tile_collision import TileCollision
@@ -373,6 +375,9 @@ class Game:
         lvl.tile_grid = room.tiles      # used by _handle_door_interactions
         lvl.enemies = []                # start empty for now
         lvl.is_boss_room = False
+        # Set level dimensions for enemy movement system
+        lvl.h = len(room.tiles) if room.tiles else 0
+        lvl.w = len(room.tiles[0]) if lvl.h > 0 else 0
 
         # --- Spawn PCG enemies from room metadata 'spawn' areas ---
         try:

@@ -286,7 +286,7 @@ class LevelLoader:
             # compute region center
             cx_sum = 0.0; cy_sum = 0.0; cnt = 0
             for rect in r.rects:
-                rx = int(rect.get('x', 0)); ry = int(rect.get('y', 0)); rw = int(rect.get('w', 1)); rh = int(rect.get('h', 1))
+                rx = int(rect.x); ry = int(rect.y); rw = int(rect.w); rh = int(rect.h)
                 cx_sum += rx + rw / 2.0
                 cy_sum += ry + rh / 2.0
                 cnt += 1
