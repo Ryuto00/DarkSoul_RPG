@@ -373,7 +373,33 @@ def _carve_spawn_and_exits_for_room(room: RoomData, config: PCGConfig, rng: rand
                 excl_y = top_y + 3
                 if excl_y < h - 1:
                     _add_area('exclusion_zone', {'x': left_x, 'y': excl_y, 'w': 3, 'h': 1})
-                used_quadrants.add(exit_quadrant)
+                used_quadrants.add(entrance_quadrant)
+    
+    # Exit carves using quadrant system
+    door_exits = getattr(room, 'door_exits', {})
+    if door_exits:
+        available_quadrants = ['TL', 'TR', 'BL', 'BR']
+        
+        for door_key in door_exits.keys():
+            exit_quadrant = select_available_quadrant(used_quadrants, available_quadrants, rng)
+            
+            if exit_quadrant:
+                quadrant_rect = quadrants[exit_quadrant]
+                pos = get_random_position_in_quadrant(quadrant_rect, 3, rng)
+                
+                if pos:
+                    left_x, top_y = pos
+                    # carve 3x3 to air
+                    for yy in range(top_y, top_y + 3):
+                        for xx in range(left_x, left_x + 3):
+                            if 0 <= yy < h and 0 <= xx < w:
+                                tiles[yy][xx] = TILE_AIR
+                    _add_area('door_carve', {'x': left_x, 'y': top_y, 'w': 3, 'h': 3, 'door_key': door_key})
+                    # add 3x1 exclusion row below
+                    excl_y = top_y + 3
+                    if excl_y < h - 1:
+                        _add_area('exclusion_zone', {'x': left_x, 'y': excl_y, 'w': 3, 'h': 1})
+                    used_quadrants.add(exit_quadrant)
 
 
 def generate_simple_pcg_level_set(
