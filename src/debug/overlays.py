@@ -16,11 +16,15 @@ class DebugOverlays:
         try:
             lvl = getattr(game, 'level', None)
             if not lvl or not hasattr(lvl, 'level_id') or not hasattr(lvl, 'room_code'):
+
                 return
             from src.level.level_loader import level_loader
             regions = level_loader.get_room_areas(lvl.level_id, lvl.room_code)
             if not regions:
+                print(f"DEBUG: No regions found for {lvl.level_id}/{lvl.room_code}")
                 return
+            
+
 
             kind_colors = {
                 'spawn': (50, 200, 50, 120),
@@ -30,6 +34,7 @@ class DebugOverlays:
                 'biome': (160, 220, 160, 110),
                 'door_proximity': (200, 200, 80, 140),
                 'safe_zone': (80, 200, 200, 110),
+                'door_carve': (100, 150, 255, 140),  # Blue for door areas
             }
 
             overlay = pygame.Surface(game.screen.get_size(), pygame.SRCALPHA)

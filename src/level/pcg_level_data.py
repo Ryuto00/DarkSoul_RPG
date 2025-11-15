@@ -214,9 +214,13 @@ class AreaRegion:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "AreaRegion":
-        rects = [AreaRect(**r) for r in data.get("rects", [])]
+        rects = []
+        for r in data.get("rects", []):
+            # Filter only valid AreaRect fields
+            rect_data = {k: v for k, v in r.items() if k in ['x', 'y', 'w', 'h']}
+            rects.append(AreaRect(**rect_data))
         return cls(
-            region_id=str(data["region_id"]),
+            region_id=str(data.get("region_id", f"{data.get('kind', 'unknown')}_{id(data)}")),
             label=data.get("label"),
             kind=str(data.get("kind", "spawn")),
             rects=rects,
