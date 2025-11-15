@@ -543,6 +543,7 @@ def _run_single_walk(tile_grid: List[List[int]], start_pos: Tuple[int, int], end
     current = start_pos
     carved: List[Tuple[int, int]] = []
 
+    last_move: Optional[Tuple[int,int]] = None
     for _ in range(max(1, int(max_steps))):
         # If current is excluded, try to nudge to nearest non-excluded tile
         if current in exclusion_set:
@@ -552,6 +553,7 @@ def _run_single_walk(tile_grid: List[List[int]], start_pos: Tuple[int, int], end
                     cand = (max(1, min(w - 2, current[0] + dx)), max(1, min(h - 2, current[1] + dy)))
                     if cand not in exclusion_set:
                         current = cand
+                        last_move = (dx, dy)
                         moved = True
                         break
                 if moved:
@@ -564,30 +566,37 @@ def _run_single_walk(tile_grid: List[List[int]], start_pos: Tuple[int, int], end
         if current not in carved:
             carved.append(current)
 
-        # stop if close enough
+        # stop if close enough (use Manhattan)
         if abs(current[0] - end_pos[0]) + abs(current[1] - end_pos[1]) <= 3:
             break
 
-        dx, dy = _get_drunken_move(current, end_pos, config, rng)
+        dx, dy = _get_drunken_move(current, end_pos, config, rng, last_move=last_move)
         nx = max(1, min(w - 2, current[0] + dx))
         ny = max(1, min(h - 2, current[1] + dy))
 
         # If next step would land in exclusion, try alternatives (random tries)
         next_pos = (nx, ny)
+        next_move = (dx, dy)
         if next_pos in exclusion_set:
             alt_found = False
-            for _ in range(6):
-                adx, ady = rng.choice([(0,1),(0,-1),(1,0),(-1,0)])
+            # try including diagonals if allowed
+            move_pool = [(0,1),(0,-1),(1,0),(-1,0)]
+            if getattr(config, 'dw_allow_diagonals', True):
+                move_pool += [(1,1),(1,-1),(-1,1),(-1,-1)]
+            for _ in range(12):
+                adx, ady = rng.choice(move_pool)
                 candx = max(1, min(w - 2, current[0] + adx))
                 candy = max(1, min(h - 2, current[1] + ady))
                 if (candx, candy) not in exclusion_set:
                     next_pos = (candx, candy)
+                    next_move = (adx, ady)
                     alt_found = True
                     break
             if not alt_found:
                 # cannot move without hitting exclusion, end walk
                 break
 
+        last_move = next_move
         current = next_pos
 
     return carved
@@ -611,19 +620,45 @@ def _carve_at(tile_grid: List[List[int]], pos: Tuple[int, int], radius: int, con
                 tile_grid[yy][xx] = config.air_tile_id
 
 
-def _get_drunken_move(current_pos: Tuple[int, int], target_pos: Tuple[int, int], config: PCGConfig, rng: random.Random) -> Tuple[int, int]:
-    """Decide next step; biased toward target with probability config.dw_exit_bias."""
+def _get_drunken_move(current_pos: Tuple[int, int], target_pos: Tuple[int, int], config: PCGConfig, rng: random.Random, last_move: Optional[Tuple[int,int]] = None) -> Tuple[int, int]:
+    """Decide next step; biased toward target but with persistence to meander.
+
+    - `dw_exit_bias` still biases moves toward the target.
+    - `dw_persistence` is chance to repeat last_move (inertia).
+    - `dw_allow_diagonals` permits diagonal steps occasionally.
+    """
+    # Possible move pool
+    cardinal = [(0,1),(0,-1),(1,0),(-1,0)]
+    diag = [(1,1),(1,-1),(-1,1),(-1,-1)]
+    allow_diags = bool(getattr(config, 'dw_allow_diagonals', True))
+
+    # Persistence: sometimes keep last move
+    if last_move and rng.random() < float(getattr(config, 'dw_persistence', 0.6)):
+        return last_move
+
+    # Bias toward target
     if rng.random() < float(getattr(config, 'dw_exit_bias', 0.4)):
         dx = target_pos[0] - current_pos[0]
         dy = target_pos[1] - current_pos[1]
+        step_x = 0
+        step_y = 0
+        if dx != 0:
+            step_x = 1 if dx > 0 else -1
+        if dy != 0:
+            step_y = 1 if dy > 0 else -1
+        if allow_diags and step_x != 0 and step_y != 0:
+            return (step_x, step_y)
+        # prefer larger delta
         if abs(dx) > abs(dy):
-            return (1 if dx > 0 else -1, 0)
-        elif abs(dy) > 0:
-            return (0, 1 if dy > 0 else -1)
+            return (step_x, 0)
         else:
-            return (0, 0)
-    else:
-        return rng.choice([(0, 1), (0, -1), (1, 0), (-1, 0)])
+            return (0, step_y)
+
+    # Random move: choose from allowed set (cardinal + maybe diagonal)
+    pool = list(cardinal)
+    if allow_diags and rng.random() < 0.25:
+        pool.extend(diag)
+    return rng.choice(pool)
 
 
 # ----- Connectivity check and repair -----
