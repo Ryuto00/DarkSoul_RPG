@@ -374,12 +374,35 @@ class Game:
         lvl.enemies = []                # start empty for now
         lvl.is_boss_room = False
         
-        # Simple spawn: center of room
+        # Try to find door entrance spawn point first, fall back to center of room
+        from src.core.interaction import find_spawn_point
+        from config import TILE
+        
+        # Default spawn: center of room (fallback)
         h = len(room.tiles)
         w = len(room.tiles[0]) if h > 0 else 0
-        from config import TILE
-        lvl.spawn[0] = w // 2 * TILE
-        lvl.spawn[1] = (h - 2) * TILE  # just above floor
+        default_spawn_x = w // 2 * TILE
+        default_spawn_y = (h - 2) * TILE  # just above floor
+        
+        # Try to find proper door entrance spawn point
+        try:
+            # For initial room load, entrance_id should be None to find any entrance
+            spawn_tile = find_spawn_point(room.tiles, entrance_id=None)
+            if spawn_tile:
+                # Use door entrance position if found
+                lvl.spawn[0] = spawn_tile[0] * TILE
+                lvl.spawn[1] = spawn_tile[1] * TILE
+                logger.info(f"Using door entrance spawn at tile ({spawn_tile[0]}, {spawn_tile[1]}) for room {room.room_code}")
+            else:
+                # Fall back to default center spawn
+                lvl.spawn[0] = default_spawn_x
+                lvl.spawn[1] = default_spawn_y
+                logger.info(f"No door entrance found in room {room.room_code}, using center spawn")
+        except Exception as e:
+            # If spawn point finding fails, use default
+            lvl.spawn[0] = default_spawn_x
+            lvl.spawn[1] = default_spawn_y
+            logger.warning(f"Failed to find door entrance spawn for room {room.room_code}: {e}, using center spawn")
         
 
 
@@ -402,7 +425,7 @@ class Game:
                     ds.current_level_id = lvl.level_id
                     ds.current_room_code = lvl.room_code
                     # ensure door system sees the exact tile grid used for rendering
-                    ds.current_tiles = lvl.tile_grid
+                    ds.current_tile_grid = lvl.tile_grid
         except Exception:
             logger.exception("Failed to sync DoorSystem after PCG level load")
         
