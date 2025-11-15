@@ -402,6 +402,120 @@ def _carve_spawn_and_exits_for_room(room: RoomData, config: PCGConfig, rng: rand
                     used_quadrants.add(exit_quadrant)
 
 
+
+# ----- Drunken Walk carving helpers -----
+
+def _carve_drunken_walk_paths(room: RoomData, config: PCGConfig, rng: random.Random) -> None:
+    """
+    Finds the entrance/exits for the room and carves paths between them.
+    This function assumes the room.tiles is a solid grid (walls) and will
+    carve TILE_AIR tiles into it based on DW settings in PCGConfig.
+    """
+    tile_grid = getattr(room, 'tiles', None)
+    if not tile_grid:
+        return
+
+    start_pos = None
+    exit_positions: List[Tuple[int, int]] = []
+
+    areas = getattr(room, 'areas', []) or []
+    # areas may be list of dicts (as created by _carve_spawn_and_exits_for_room)
+    for area in areas:
+        if not isinstance(area, dict):
+            continue
+        if area.get('kind') != 'door_carve':
+            continue
+        rects = area.get('rects') or []
+        if not rects:
+            continue
+        rect = rects[0]
+        if not isinstance(rect, dict):
+            continue
+        tx = int(rect.get('x', 0) + (rect.get('w', 1) // 2))
+        ty = int(rect.get('y', 0) + (rect.get('h', 1) // 2))
+        door_key = rect.get('door_key')
+        if door_key == 'entrance':
+            start_pos = (tx, ty)
+        elif door_key in ('door_exit_1', 'door_exit_2'):
+            exit_positions.append((tx, ty))
+
+    # Fallback start if none found
+    h = len(tile_grid)
+    w = len(tile_grid[0]) if h > 0 else 0
+    if not start_pos:
+        start_pos = (w // 2, h - 3)
+
+    # If there are no exits, for the first room create a short walk to seed a cave
+    if not exit_positions and is_first_room_first_level(room):
+        fake_exit = (rng.randint(max(2, w//4), max(2, 3*w//4)), rng.randint(max(2, h//4), max(2, 3*h//4)))
+        _run_single_walk(tile_grid, start_pos, fake_exit, config, rng, max_steps=max(1, config.dw_max_steps // 2))
+        return
+
+    all_paths: List[Tuple[int, int]] = []
+
+    for exit_pos in exit_positions:
+        path = _run_single_walk(tile_grid, start_pos, exit_pos, config, rng, max_steps=config.dw_max_steps)
+        all_paths.extend(path)
+
+    # Possibly spawn an extra random walk from an existing carved tile to make loops
+    if all_paths and config.dw_extra_drunk_chance and rng.random() < config.dw_extra_drunk_chance:
+        random_start_pos = rng.choice(all_paths)
+        random_target = (rng.randint(2, max(2, w - 3)), rng.randint(2, max(2, h - 3)))
+        _run_single_walk(tile_grid, random_start_pos, random_target, config, rng, max_steps=config.dw_extra_drunk_steps)
+
+
+def _run_single_walk(tile_grid: List[List[int]], start_pos: Tuple[int, int], end_pos: Tuple[int, int], config: PCGConfig, rng: random.Random, max_steps: int) -> List[Tuple[int, int]]:
+    """Run a single drunkard walk carving into tile_grid and return carved tiles."""
+    h = len(tile_grid)
+    w = len(tile_grid[0]) if h > 0 else 0
+    current = start_pos
+    carved: List[Tuple[int, int]] = []
+
+    for _ in range(max(1, int(max_steps))):
+        _carve_at(tile_grid, current, config.dw_carve_radius, config)
+        if current not in carved:
+            carved.append(current)
+
+        # stop if close enough
+        if abs(current[0] - end_pos[0]) + abs(current[1] - end_pos[1]) <= 3:
+            break
+
+        dx, dy = _get_drunken_move(current, end_pos, config, rng)
+        nx = max(1, min(w - 2, current[0] + dx))
+        ny = max(1, min(h - 2, current[1] + dy))
+        current = (nx, ny)
+
+    return carved
+
+
+def _carve_at(tile_grid: List[List[int]], pos: Tuple[int, int], radius: int, config: PCGConfig) -> None:
+    """Carve a simple square of air centered on pos using config.air_tile_id."""
+    h = len(tile_grid)
+    w = len(tile_grid[0]) if h > 0 else 0
+    cx, cy = pos
+    r = max(1, int(radius))
+    offset = r - 1
+    for yy in range(cy - offset, cy + r):
+        for xx in range(cx - offset, cx + r):
+            if 0 <= yy < h and 0 <= xx < w:
+                tile_grid[yy][xx] = config.air_tile_id
+
+
+def _get_drunken_move(current_pos: Tuple[int, int], target_pos: Tuple[int, int], config: PCGConfig, rng: random.Random) -> Tuple[int, int]:
+    """Decide next step; biased toward target with probability config.dw_exit_bias."""
+    if rng.random() < float(getattr(config, 'dw_exit_bias', 0.4)):
+        dx = target_pos[0] - current_pos[0]
+        dy = target_pos[1] - current_pos[1]
+        if abs(dx) > abs(dy):
+            return (1 if dx > 0 else -1, 0)
+        elif abs(dy) > 0:
+            return (0, 1 if dy > 0 else -1)
+        else:
+            return (0, 0)
+    else:
+        return rng.choice([(0, 1), (0, -1), (1, 0), (-1, 0)])
+
+
 def generate_simple_pcg_level_set(
     seed: Optional[int] = None,
 ) -> LevelSet:
@@ -438,22 +552,43 @@ def generate_simple_pcg_level_set(
 
     for level_rooms in all_levels_rooms:
         for room in level_rooms:
-            # perform carving (3x3 carved areas and platform no-carve regions)
+            # Step 1: Carve the 3x3 door areas (this also finds their locations)
             try:
                 _carve_spawn_and_exits_for_room(room, config, rng, place_entrance_fn=None, place_exit_fn=None, allow_entrance=True)
-            except Exception:
+            except Exception as e:
+                # Log and continue; do not let carve failures stop generation
+                try:
+                    import logging
+                    logging.getLogger(__name__).error(f"Failed _carve_spawn_and_exits_for_room: {e}")
+                except Exception:
+                    pass
                 pass
 
-            # ensure placed_doors initialized
+            # --- NEW STEP 2: Carve main paths with Drunken Walk ---
+            try:
+                _carve_drunken_walk_paths(room, config, rng)
+            except Exception as e:
+                try:
+                    import logging
+                    logging.getLogger(__name__).error(f"Failed _carve_drunken_walk_paths: {e}")
+                except Exception:
+                    pass
+                pass
+            
+            # --- (Future Step): This is where you would add _run_cellular_automata(room, config, rng) ---
+
+            # Step 3: Place the actual door tiles into the carved-out grid
             if getattr(room, 'placed_doors', None) is None:
                 room.placed_doors = []
-
-            # delegate tile placement to centralized helper
             try:
                 if place_all_doors_for_room:
                     place_all_doors_for_room(room, rng=rng)
-            except Exception:
-                # Do not let door placement break generation
+            except Exception as e:
+                try:
+                    import logging
+                    logging.getLogger(__name__).error(f"Failed place_all_doors_for_room: {e}")
+                except Exception:
+                    pass
                 pass
 
     levels: List[LevelData] = []

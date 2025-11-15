@@ -41,6 +41,21 @@ class PCGConfig:
     # Radius (in tiles) from the quadrant corner where carve centers may be chosen
     quadrant_radius: int = 10
 
+    # --- DRUNKEN WALK SETTINGS ---
+    # The total number of steps the drunkard can take before giving up.
+    dw_max_steps: int = 20000
+    # The % chance (0.0 to 1.0) the drunkard moves toward the exit vs. a random direction.
+    # 0.0 = pure random. 1.0 = a straight line. 0.4 is a good start.
+    dw_exit_bias: float = 0.4
+    # The radius of the carving "brush". 1 = a 1x1 tile. 2 = a 2x2 square or 3x3 circle.
+    # Start with 1 to create thin paths.
+    dw_carve_radius: int = 1
+    # % chance to spawn an "extra" drunkard from a random point on an existing path.
+    # This creates side-rooms and loops.
+    dw_extra_drunk_chance: float = 0.1
+    # How long the "extra" drunkards walk for.
+    dw_extra_drunk_steps: int = 1000
+
 
 @dataclass
 class RoomData:
