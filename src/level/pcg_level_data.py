@@ -54,10 +54,26 @@ class PCGConfig:
     # Allow diagonal moves sometimes (makes meandering more organic)
     dw_allow_diagonals: bool = True
     # % chance to spawn an "extra" drunkard from a random point on an existing path.
-    # This creates side-rooms and loops.
-    dw_extra_drunk_chance: float = 0.1
+    # This creates side-rooms and loops. Increase to create more coverage.
+    dw_extra_drunk_chance: float = 0.35
     # How long the "extra" drunkards walk for.
-    dw_extra_drunk_steps: int = 1000
+    dw_extra_drunk_steps: int = 1500
+
+    # --- Pocket room (unused quadrant) settings ---
+    # Size of the pocket room carved in unused quadrants (square side length)
+    pocket_room_size: int = 9
+    # Chance to create a pocket room in an unused quadrant
+    pocket_room_chance: float = 0.95
+
+    # --- Post-CA dilation (grows caves slightly to use more area) ---
+    # Number of dilation iterations (0 disables)
+    post_ca_dilation_iterations: int = 1
+    # Dilation radius (Manhattan) applied each iteration
+    post_ca_dilation_radius: int = 1
+
+    # --- Vertical movement safety ---
+    # During S-shaped carving, insert a horizontal offset every N vertical tiles
+    dw_vertical_step_interval: int = 3
 
 
     # --- CELLULAR AUTOMATA SETTINGS ---

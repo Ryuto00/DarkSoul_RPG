@@ -414,6 +414,9 @@ def _carve_drunken_walk_paths(room: RoomData, config: PCGConfig, rng: random.Ran
     if not tile_grid:
         return
 
+    # ensure we have a list for paths we will record
+    all_paths: List[Tuple[int, int]] = []
+
     # Build exclusion set from room.areas (rects)
     exclusion_set: Set[Tuple[int, int]] = set()
     areas = getattr(room, 'areas', []) or []
@@ -480,6 +483,71 @@ def _carve_drunken_walk_paths(room: RoomData, config: PCGConfig, rng: random.Ran
         if found:
             start_pos = found
 
+    # Ensure all_paths exists before we may append to it
+    all_paths: List[Tuple[int, int]] = []
+
+    # --- Pocket rooms in unused quadrants ---
+    # Build quadrant map and detect which quadrants already have door carves
+    quadrants = get_room_quadrants(w, h, config.quadrant_radius)
+    used_quadrants: Set[str] = set()
+    for area in areas:
+        if not isinstance(area, dict):
+            continue
+        if area.get('kind') != 'door_carve':
+            continue
+        rects = area.get('rects') or []
+        if not rects:
+            continue
+        r = rects[0]
+        if not isinstance(r, dict):
+            continue
+        cx = int(r.get('x', 0) + (r.get('w', 1) // 2))
+        cy = int(r.get('y', 0) + (r.get('h', 1) // 2))
+        for qname, (qx, qy, qw, qh) in quadrants.items():
+            if qx <= cx < qx + qw and qy <= cy < qy + qh:
+                used_quadrants.add(qname)
+                break
+
+    # For unused quadrants, optionally carve a pocket room (preserved by CA)
+    pocket_size = max(3, int(getattr(config, 'pocket_room_size', 7)))
+    pocket_chance = float(getattr(config, 'pocket_room_chance', 0.9))
+    for qname, (qx, qy, qw, qh) in quadrants.items():
+        if qname in used_quadrants:
+            continue
+        if rng.random() > pocket_chance:
+            continue
+        # clamp pocket to quadrant
+        s = min(pocket_size, max(3, qw), max(3, qh))
+        # try a few candidate positions inside quadrant
+        carved_pocket = False
+        for _ in range(6):
+            px = rng.randint(qx, max(qx, qx + qw - s))
+            py = rng.randint(qy, max(qy, qy + qh - s))
+            # ensure pocket doesn't overlap exclusions or door carves
+            overlap = False
+            for yy in range(py, py + s):
+                for xx in range(px, px + s):
+                    if (xx, yy) in exclusion_set:
+                        overlap = True
+                        break
+                if overlap:
+                    break
+            if overlap:
+                continue
+            # carve pocket
+            for yy in range(py, py + s):
+                for xx in range(px, px + s):
+                    if 0 <= yy < h and 0 <= xx < w:
+                        tile_grid[yy][xx] = config.air_tile_id
+            # record area so CA preserves it
+            room.areas = getattr(room, 'areas', []) or []
+            room.areas.append({'kind': 'pocket_room', 'rects': [{'x': px, 'y': py, 'w': s, 'h': s}], 'properties': {}})
+            carved_pocket = True
+            # add the pocket center to all_paths so random extra walks may start from it
+            all_paths.append((px + s // 2, py + s // 2))
+            break
+        # end pocket attempts
+
     # If there are no exits, for the first room create a short walk to seed a cave
     if not exit_positions and is_first_room_first_level(room):
         # pick a fake exit not in exclusion
@@ -494,18 +562,81 @@ def _carve_drunken_walk_paths(room: RoomData, config: PCGConfig, rng: random.Ran
         _run_single_walk(tile_grid, start_pos, fake_exit, config, rng, max_steps=max(1, config.dw_max_steps // 2), exclusion_set=exclusion_set)
         return
 
-    all_paths: List[Tuple[int, int]] = []
+    # Instead of single direct walks: connect entrance -> pockets -> hub -> exits.
+    # Determine hub (prefer room center but avoid exclusions)
+    hub = (w // 2, h // 2)
+    if hub in exclusion_set:
+        found = None
+        for radius in (1, 2, 3, 4):
+            for dy in range(-radius, radius + 1):
+                for dx in range(-radius, radius + 1):
+                    cand = (max(1, min(w - 2, hub[0] + dx)), max(1, min(h - 2, hub[1] + dy)))
+                    if cand not in exclusion_set:
+                        found = cand
+                        break
+                if found:
+                    break
+            if found:
+                break
+        if found:
+            hub = found
 
+    # Collect pocket centers (created earlier) from room.areas
+    pocket_centers: List[Tuple[int,int]] = []
+    for area in areas:
+        if not isinstance(area, dict):
+            continue
+        if area.get('kind') != 'pocket_room':
+            continue
+        rects = area.get('rects') or []
+        if not rects:
+            continue
+        r = rects[0]
+        if not isinstance(r, dict):
+            continue
+        px = int(r.get('x',0) + (r.get('w',1)//2))
+        py = int(r.get('y',0) + (r.get('h',1)//2))
+        pocket_centers.append((px,py))
+
+    # Connection order: start -> shuffled pockets -> hub
+    order: List[Tuple[int,int]] = []
+    if pocket_centers:
+        rng.shuffle(pocket_centers)
+        order.extend(pocket_centers)
+    order.append(hub)
+
+    cur_pos = start_pos
+    for target in order:
+        if target in exclusion_set:
+            # nudge target outward
+            for _ in range(8):
+                target = (max(2, min(w - 3, target[0] + rng.randint(-1, 1))), max(2, min(h - 3, target[1] + rng.randint(-1, 1))))
+                if target not in exclusion_set:
+                    break
+        try:
+            seg = _run_s_shaped_walk(tile_grid, cur_pos, target, config, rng, max_steps=max(50, config.dw_max_steps // 10), exclusion_set=exclusion_set, straight_run_min=3, straight_run_max=8, bias=0.4)
+            all_paths.extend(seg)
+            cur_pos = target
+        except Exception:
+            seg = _run_single_walk(tile_grid, cur_pos, target, config, rng, max_steps=max(50, config.dw_max_steps // 10), exclusion_set=exclusion_set)
+            all_paths.extend(seg)
+            cur_pos = target
+
+    # From the hub (or last target) carve S-shaped spokes to each exit (avoid vertical shafts)
     for exit_pos in exit_positions:
-        # If exit is in exclusion, try to nudge it slightly outward
         ep = exit_pos
         if ep in exclusion_set:
             for _ in range(8):
                 ep = (max(2, min(w - 3, ep[0] + rng.randint(-1, 1))), max(2, min(h - 3, ep[1] + rng.randint(-1, 1))))
                 if ep not in exclusion_set:
                     break
-        path = _run_single_walk(tile_grid, start_pos, ep, config, rng, max_steps=config.dw_max_steps, exclusion_set=exclusion_set)
-        all_paths.extend(path)
+        try:
+            spoke = _run_s_shaped_walk(tile_grid, cur_pos, ep, config, rng, max_steps=max(60, config.dw_max_steps // 8), exclusion_set=exclusion_set, straight_run_min=3, straight_run_max=8, bias=0.6)
+            all_paths.extend(spoke)
+        except Exception:
+            p = _run_single_walk(tile_grid, cur_pos, ep, config, rng, max_steps=max(60, config.dw_max_steps // 8), exclusion_set=exclusion_set)
+            all_paths.extend(p)
+
 
     # Possibly spawn an extra random walk from an existing carved tile to make loops
     if all_paths and config.dw_extra_drunk_chance and rng.random() < config.dw_extra_drunk_chance:
@@ -528,6 +659,111 @@ def _carve_drunken_walk_paths(room: RoomData, config: PCGConfig, rng: random.Ran
             if random_target is None:
                 random_target = random_start_pos
             _run_single_walk(tile_grid, random_start_pos, random_target, config, rng, max_steps=config.dw_extra_drunk_steps, exclusion_set=exclusion_set)
+
+
+# ----- S-shaped walk helpers -----
+
+def _run_s_shaped_walk(tile_grid: List[List[int]], start_pos: Tuple[int,int], end_pos: Tuple[int,int], config: PCGConfig, rng: random.Random, max_steps: int, exclusion_set: Optional[Set[Tuple[int,int]]] = None, straight_run_min: int = 3, straight_run_max: int = 8, bias: float = 0.5) -> List[Tuple[int,int]]:
+    """Run a hub-and-spoke style S-shaped walk from start to end.
+
+    The walker makes straight runs (orthogonal) of random length, then turns,
+    producing S-shaped segments. `bias` controls attraction to target when choosing turns.
+    Returns list of carved tile centers.
+    """
+    if exclusion_set is None:
+        exclusion_set = set()
+    h = len(tile_grid)
+    w = len(tile_grid[0]) if h>0 else 0
+
+    cur = start_pos
+    carved = []
+    steps = 0
+
+    # Determine initial preferred direction toward target (cardinal)
+    def preferred_dir(a,b):
+        dx = b[0]-a[0]
+        dy = b[1]-a[1]
+        if abs(dx) > abs(dy):
+            return (1 if dx>0 else -1, 0)
+        else:
+            return (0, 1 if dy>0 else -1)
+
+    pref = preferred_dir(cur, end_pos)
+
+    # We'll alternate axes to avoid long straight shafts: axis 0 = x, axis 1 = y
+    dx_total = end_pos[0] - cur[0]
+    dy_total = end_pos[1] - cur[1]
+    axis = 0 if abs(dx_total) >= abs(dy_total) else 1
+
+    while steps < max_steps:
+        # shorter runs to avoid shafts
+        run_len = rng.randint(max(1, straight_run_min), max(1, min(straight_run_max, 6)))
+        for _ in range(run_len):
+            # carve current
+            _carve_at(tile_grid, cur, config.dw_carve_radius, config, exclusion_set=exclusion_set)
+            carved.append(cur)
+            steps += 1
+            if steps >= max_steps:
+                break
+
+            # decide step along current axis toward target
+            if axis == 0:
+                # move in x toward target
+                step = 1 if end_pos[0] > cur[0] else -1 if end_pos[0] < cur[0] else 0
+                nx = max(1, min(w-2, cur[0] + step))
+                ny = cur[1]
+                intended = (nx, ny)
+            else:
+                step = 1 if end_pos[1] > cur[1] else -1 if end_pos[1] < cur[1] else 0
+                nx = cur[0]
+                ny = max(1, min(h-2, cur[1] + step))
+                intended = (nx, ny)
+
+            if intended in exclusion_set or intended == cur:
+                # try to nudge: prefer orthogonal move (the other axis), then any cardinal
+                moved = False
+                # try other axis move toward target
+                if axis == 0:
+                    # try y move
+                    vy = 1 if end_pos[1] > cur[1] else -1 if end_pos[1] < cur[1] else 0
+                    if vy != 0:
+                        cand = (cur[0], max(1, min(h-2, cur[1] + vy)))
+                        if cand not in exclusion_set and cand != cur:
+                            cur = cand
+                            moved = True
+                else:
+                    vx = 1 if end_pos[0] > cur[0] else -1 if end_pos[0] < cur[0] else 0
+                    if vx != 0:
+                        cand = (max(1, min(w-2, cur[0] + vx)), cur[1])
+                        if cand not in exclusion_set and cand != cur:
+                            cur = cand
+                            moved = True
+                if not moved:
+                    # try any cardinal move that's allowed
+                    for adx, ady in [(1,0),(-1,0),(0,1),(0,-1)]:
+                        cand = (max(1,min(w-2, cur[0]+adx)), max(1,min(h-2, cur[1]+ady)))
+                        if cand not in exclusion_set and cand != cur:
+                            cur = cand
+                            moved = True
+                            break
+                if not moved:
+                    return carved
+            else:
+                cur = intended
+
+            # stop if reached near end
+            if abs(cur[0]-end_pos[0]) + abs(cur[1]-end_pos[1]) <= 3:
+                _carve_at(tile_grid, end_pos, config.dw_carve_radius, config, exclusion_set=exclusion_set)
+                carved.append(end_pos)
+                return carved
+
+        # switch axis to produce zig-zag
+        axis = 1 - axis
+        # small random jitter: occasionally change axis early
+        if rng.random() < 0.15:
+            axis = 1 - axis
+
+    return carved
 
 
 def _run_single_walk(tile_grid: List[List[int]], start_pos: Tuple[int, int], end_pos: Tuple[int, int], config: PCGConfig, rng: random.Random, max_steps: int, exclusion_set: Optional[Set[Tuple[int,int]]] = None) -> List[Tuple[int, int]]:
@@ -795,16 +1031,122 @@ def _run_cellular_automata(room: RoomData, config: PCGConfig, rng: random.Random
             rh = int(rect.get('h', 0))
             for yy in range(ry, ry + rh):
                 for xx in range(rx, rx + rw):
-                    if kind == 'door_carve':
+                    if kind == 'door_carve' or kind == 'pocket_room':
+                        # treat pocket rooms like protected air so CA doesn't fill them
                         door_set.add((xx, yy))
                     elif kind == 'exclusion_zone':
                         exclusion_set.add((xx, yy))
 
+    # Expand pocket rooms slightly before CA so they become larger rooms
     current_grid = room.tiles
+    h = len(current_grid)
+    w = len(current_grid[0]) if h > 0 else 0
+    pocket_expand = max(1, int(getattr(config, 'pocket_room_size', 7)) // 3)
+    for area in areas:
+        if not isinstance(area, dict):
+            continue
+        if area.get('kind') != 'pocket_room':
+            continue
+        rects = area.get('rects') or []
+        for rect in rects:
+            if not isinstance(rect, dict):
+                continue
+            rx = int(rect.get('x', 0))
+            ry = int(rect.get('y', 0))
+            rw = int(rect.get('w', 0))
+            rh = int(rect.get('h', 0))
+            # carve a slightly larger square around the pocket
+            for yy in range(max(0, ry - pocket_expand), min(h, ry + rh + pocket_expand)):
+                for xx in range(max(0, rx - pocket_expand), min(w, rx + rw + pocket_expand)):
+                    if (xx, yy) not in exclusion_set:
+                        door_set.add((xx, yy))
+                        # also ensure current grid has air so CA grows from it
+                        current_grid[yy][xx] = config.air_tile_id
+    # end pocket expansion
+
     for _ in range(iterations):
         current_grid = _ca_smoothing_step(current_grid, config, door_set=door_set, exclusion_set=exclusion_set)
 
     room.tiles = current_grid
+
+
+def _post_ca_dilation(room: RoomData, config: PCGConfig) -> None:
+    """Grow air regions slightly after CA to use more map area.
+
+    Converts wall tiles to air if they are within Manhattan `post_ca_dilation_radius`
+    of an air tile. Runs `post_ca_dilation_iterations` times.
+
+    This version preserves protected areas (door_carve, exclusion_zone, platform, door_support)
+    and never converts the outer boundary tiles.
+    """
+    iters = int(getattr(config, 'post_ca_dilation_iterations', 0))
+    radius = int(getattr(config, 'post_ca_dilation_radius', 0))
+    if iters <= 0 or radius <= 0:
+        return
+
+    # Build protected sets from room.areas so we don't overwrite doors/platforms/exclusions
+    areas = getattr(room, 'areas', []) or []
+    protected: Set[Tuple[int,int]] = set()
+    exclusion_set: Set[Tuple[int,int]] = set()
+    for area in areas:
+        if not isinstance(area, dict):
+            continue
+        kind = area.get('kind')
+        rects = area.get('rects') or []
+        for rect in rects:
+            if not isinstance(rect, dict):
+                continue
+            rx = int(rect.get('x', 0))
+            ry = int(rect.get('y', 0))
+            rw = int(rect.get('w', 0))
+            rh = int(rect.get('h', 0))
+            for yy in range(ry, ry + rh):
+                for xx in range(rx, rx + rw):
+                    if kind in ('door_carve', 'pocket_room', 'spawn_surface'):
+                        # pocket_room/spawn_surface can be considered protected from dilation
+                        protected.add((xx, yy))
+                    if kind == 'exclusion_zone':
+                        exclusion_set.add((xx, yy))
+                        protected.add((xx, yy))
+                    # also protect obvious platform kinds if present
+                    if kind in ('platform', 'door_support'):
+                        protected.add((xx, yy))
+
+    grid = room.tiles
+    h = len(grid)
+    w = len(grid[0]) if h > 0 else 0
+
+    for _ in range(iters):
+        to_air: Set[Tuple[int,int]] = set()
+        for y in range(1, h-1):
+            for x in range(1, w-1):
+                # never convert protected tiles
+                if (x,y) in protected or (x,y) in exclusion_set:
+                    continue
+                if grid[y][x] == config.air_tile_id:
+                    continue
+                # check neighbors within manhattan radius
+                found = False
+                for dy in range(-radius, radius + 1):
+                    yy = y + dy
+                    if yy < 1 or yy >= h-1:
+                        continue
+                    max_dx = radius - abs(dy)
+                    for dx in range(-max_dx, max_dx + 1):
+                        xx = x + dx
+                        if xx < 1 or xx >= w-1:
+                            continue
+                        if grid[yy][xx] == config.air_tile_id and (xx,yy) not in exclusion_set:
+                            found = True
+                            break
+                    if found:
+                        break
+                if found:
+                    to_air.add((x,y))
+        # apply
+        for (x,y) in to_air:
+            grid[y][x] = config.air_tile_id
+    # done
 
 
 def _ca_smoothing_step(tile_grid: List[List[int]], config: PCGConfig, door_set: Optional[Set[Tuple[int,int]]] = None, exclusion_set: Optional[Set[Tuple[int,int]]] = None) -> List[List[int]]:
@@ -958,7 +1300,13 @@ def generate_simple_pcg_level_set(
             # --- NEW STEP 3: Smooth tunnels with Cellular Automata ---
             try:
                 _run_cellular_automata(room, config, rng)
-                # Ensure doors remain reachable after smoothing
+                # Post-CA dilation to grow caverns slightly and use more space
+                try:
+                    if getattr(config, 'post_ca_dilation_iterations', 0) and getattr(config, 'post_ca_dilation_radius', 0):
+                        _post_ca_dilation(room, config)
+                except Exception:
+                    pass
+                # Ensure doors remain reachable after smoothing and dilation
                 _ensure_doors_reachable(room, config, rng)
             except Exception as e:
                 try:
