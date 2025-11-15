@@ -564,6 +564,10 @@ class Game:
         sx, sy = self.level.spawn
         self.player.rect.topleft = (sx, sy)
         
+        # Trigger shop for legacy levels after every room transition
+        if not self.use_pcg:
+            self._trigger_shop_after_level_transition()
+        
 
     def goto_room(self, index: int):
         """
@@ -576,6 +580,10 @@ class Game:
         self.enemies = getattr(self.level, "enemies", [])
         hitboxes.clear()
         floating.clear()
+        
+        # Trigger shop for legacy levels after every room transition
+        if not self.use_pcg:
+            self._trigger_shop_after_level_transition()
 
     def update(self, dt=1.0/FPS):
         self.player.input(self.level, self.camera)
@@ -2242,10 +2250,6 @@ class Game:
     def _trigger_shop_after_level_transition(self):
         """Trigger shop after completing a level transition."""
         try:
-            # Only trigger shop for PCG mode
-            if not getattr(self, 'use_pcg', False):
-                return
-                
             # Check if player has enough health to shop (optional)
             if hasattr(self.player, 'max_hp') and hasattr(self.player, 'hp'):
                 if self.player.hp <= 0:
