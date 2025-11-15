@@ -2,7 +2,7 @@ import pygame
 import random
 from config import WIDTH, HEIGHT, FPS, WHITE
 from ..core.utils import draw_text, get_font
-from .items import Consumable, HealConsumable, ManaConsumable, SpeedConsumable, JumpBoostConsumable, StaminaBoostConsumable, build_armament_catalog, build_consumable_catalog, load_icon, icon_has_transparency, load_icon_masked
+from .items import Consumable, HealConsumable, ManaConsumable, SpeedConsumable, JumpBoostConsumable, StaminaBoostConsumable, build_armament_catalog, build_consumable_catalog, load_icon, icon_has_transparency, load_icon_masked, rarity_border_color
 from ..entities.entities import floating, DamageNumber
 
 from dataclasses import dataclass
@@ -895,12 +895,27 @@ class Inventory:
             item = self.armament_catalog.get(item_key) if item_key else None
             
             pygame.draw.rect(self.game.screen, (46, 52, 72), rect, border_radius=8)
+            # Default border color; override with rarity color for items
             border_color = (110, 120, 150)
+            if item:
+                try:
+                    border_color = rarity_border_color(item)
+                except Exception:
+                    border_color = (110, 120, 150)
             if selection and selection.get('kind') == 'gear_slot' and selection.get('index') == idx:
                 border_color = (255, 210, 120)
             
             if item:
                 pygame.draw.rect(self.game.screen, item.color, rect.inflate(-8, -8), border_radius=6)
+                # Draw an inner outline using rarity color to match stock styling
+                try:
+                    inner_col = rarity_border_color(item)
+                except Exception:
+                    inner_col = (110, 120, 150)
+                try:
+                    pygame.draw.rect(self.game.screen, inner_col, rect.inflate(-6, -6), width=3, border_radius=6)
+                except Exception:
+                    pass
                 # Prefer true-alpha icon, else masked placeholder, else letter
                 icon_img = None
                 if hasattr(item, 'icon_path') and item.icon_path:
@@ -934,6 +949,22 @@ class Inventory:
             # Draw entry contents regardless of selection; selection only affects border color
             if entry:
                 pygame.draw.rect(self.game.screen, entry.color, rect.inflate(-8, -8), border_radius=6)
+                # Determine border color from rarity (fallback to default)
+                try:
+                    border_color = rarity_border_color(entry)
+                except Exception:
+                    border_color = (110, 120, 150)
+                if selection and selection.get('kind') == 'consumable_slot' and selection.get('index') == idx:
+                    border_color = (255, 210, 120)
+                # Draw inner rarity outline to match stock styling
+                try:
+                    inner_col = rarity_border_color(entry)
+                except Exception:
+                    inner_col = (110, 120, 150)
+                try:
+                    pygame.draw.rect(self.game.screen, inner_col, rect.inflate(-6, -6), width=3, border_radius=6)
+                except Exception:
+                    pass
                 # Prefer true-alpha icon, else masked placeholder, else letter
                 _draw_icon_in_rect(self.game.screen, rect, entry, icon_font, radius=6)
                 if stack:
