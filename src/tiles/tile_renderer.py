@@ -7,10 +7,10 @@ from .tile_registry import tile_registry
 class TileRenderer:
     """Handles rendering of tiles."""
 
-    def __init__(self, tile_size: int = None):
+    def __init__(self, tile_size: Optional[int] = None):
         from config import TILE
+        # Use provided tile_size or fall back to configured TILE constant
         self.tile_size = tile_size if tile_size is not None else TILE
-        self.tile_size = tile_size
         self.tile_cache: Dict[TileType, pygame.Surface] = {}
         self.zoom_cache: Dict[str, pygame.Surface] = {}  # For zoom-scaled surfaces
         self.base_cache: Dict[TileType, pygame.Surface] = {}  # For base surfaces
@@ -177,14 +177,13 @@ class TileRenderer:
         """Create surface for tile based on its visual properties."""
         surface = pygame.Surface((self.tile_size, self.tile_size), pygame.SRCALPHA)
 
-        # Try to load sprite first
-        if tile_data.visual.sprite_path:
+        # Try to load sprite (but don't replace the background surface immediately)
+        sprite = None
+        if getattr(tile_data.visual, 'sprite_path', None):
             try:
                 sprite = pygame.image.load(tile_data.visual.sprite_path).convert_alpha()
-                surface = pygame.transform.scale(sprite, (self.tile_size, self.tile_size))
-                return surface
-            except:
-                pass  # Fall back to colored rect
+            except Exception:
+                sprite = None
 
         # Create colored rectangle with border if needed
         color = tile_data.visual.base_color
@@ -205,6 +204,18 @@ class TileRenderer:
                 border_color = (*border_color, 255)
             pygame.draw.rect(surface, border_color, surface.get_rect(), 2,
                            border_radius=tile_data.visual.border_radius)
+
+        # If we loaded a sprite, composite it over the rounded background so
+        # sprite per-pixel alpha is preserved and rounded corners show through.
+        if sprite:
+            try:
+                # Ensure tile_size is an int
+                size = int(self.tile_size)
+                scaled = pygame.transform.scale(sprite, (size, size))
+                surface.blit(scaled, (0, 0))
+            except Exception:
+                # Don't let sprite issues crash tile rendering
+                pass
 
         return surface
 

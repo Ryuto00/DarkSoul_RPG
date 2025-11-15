@@ -101,7 +101,14 @@ class InputHandler:
                     # inventory toggle (i)
                     if ev.key == pygame.K_i:
                         if not getattr(game, 'shop', None) or not getattr(game.shop, 'shop_open', False):
-                            game.inventory.inventory_open = not getattr(game.inventory, 'inventory_open', False)
+                            prev = getattr(game.inventory, 'inventory_open', False)
+                            game.inventory.inventory_open = not prev
+                            logger.info("Inventory toggle requested: was=%s now=%s", prev, game.inventory.inventory_open)
+                            # small debug print to ensure log shows up in consoles without configured logging
+                            try:
+                                print(f"[DEBUG] Inventory toggle: was={prev} now={game.inventory.inventory_open}")
+                            except Exception:
+                                pass
                             if not game.inventory.inventory_open:
                                 try:
                                     game.inventory._clear_inventory_selection()

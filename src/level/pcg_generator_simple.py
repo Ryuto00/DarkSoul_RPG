@@ -1016,6 +1016,14 @@ def _run_cellular_automata(room: RoomData, config: PCGConfig, rng: random.Random
     iterations = int(getattr(config, 'ca_smoothing_iterations', 0))
     if iterations <= 0:
         return
+    
+    # Performance safeguard: limit iterations for large rooms
+    room_size = len(room.tiles) * len(room.tiles[0]) if room.tiles else 0
+    max_iterations = max(1, min(iterations, max(1, 10000 // max(room_size, 1))))
+    if max_iterations < iterations:
+        import logging
+        logging.getLogger(__name__).info(f"Reducing CA iterations from {iterations} to {max_iterations} for room size {room_size}")
+        iterations = max_iterations
 
     # Build protected sets from room.areas
     door_set: Set[Tuple[int,int]] = set()
@@ -1069,7 +1077,12 @@ def _run_cellular_automata(room: RoomData, config: PCGConfig, rng: random.Random
                         current_grid[yy][xx] = config.air_tile_id
     # end pocket expansion
 
-    for _ in range(iterations):
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    for i in range(iterations):
+        if i > 0 and i % 2 == 0:  # Log every 2 iterations
+            logger.debug(f"CA smoothing iteration {i+1}/{iterations}")
         current_grid = _ca_smoothing_step(current_grid, config, door_set=door_set, exclusion_set=exclusion_set)
 
     room.tiles = current_grid
@@ -1213,17 +1226,26 @@ def _get_wall_neighbor_count(tile_grid: List[List[int]], x: int, y: int, include
         exclusion_set = set()
 
     h = len(tile_grid)
-    w = len(tile_grid[0])
+    w = len(tile_grid[0]) if h > 0 else 0
+    if w == 0:
+        return 8  # All neighbors are walls for empty grid
+    
     count = 0
 
-    for iy in range(y - 1, y + 2):
-        for ix in range(x - 1, x + 2):
+    # Pre-calculate bounds to avoid repeated checks
+    min_x = max(0, x - 1)
+    max_x = min(w - 1, x + 1)
+    min_y = max(0, y - 1)
+    max_y = min(h - 1, y + 1)
+
+    for iy in range(min_y, max_y + 1):
+        for ix in range(min_x, max_x + 1):
             if ix == x and iy == y:
                 continue
             if not include_diagonals and (ix != x and iy != y):
                 continue
 
-            # Out of bounds counts as wall
+            # Out of bounds counts as wall (handled by bounds above)
             if ix < 0 or ix >= w or iy < 0 or iy >= h:
                 count += 1
                 continue

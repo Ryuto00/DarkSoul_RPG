@@ -2,7 +2,36 @@ import pygame
 import random
 from config import WIDTH, HEIGHT, WHITE, GREEN, CYAN
 from ..core.utils import draw_text, get_font
-from .items import build_consumable_catalog, build_armament_catalog
+from .items import build_consumable_catalog, build_armament_catalog, load_icon, icon_has_transparency, load_icon_masked, rarity_border_color
+from typing import Optional
+
+
+def _safe_load_icon(path: str, size: tuple = (24,24)) -> Optional[pygame.Surface]:
+    """Return loaded surface only if the image contains transparent pixels."""
+    if not path:
+        return None
+    try:
+        surf = load_icon(path, size)
+    except Exception:
+        return None
+    if not surf:
+        return None
+    try:
+        if icon_has_transparency(path, size):
+            return surf
+    except Exception:
+        return None
+    return None
+import random as _rnd
+
+# Rarity weights for equipment selection
+RARITY_WEIGHTS = {
+    'Normal': 60,
+    'Rare': 25,
+    'Epic': 10,
+    'Legendary': 5,
+}
+
 from ..entities.entities import floating, DamageNumber
 
 
@@ -51,13 +80,26 @@ class Shop:
             
             self.consumable_stock[key] = stock
         
-        # Randomly select 3 equipment
-        equipment_keys = list(self.shop_equipment.keys())
-        random.shuffle(equipment_keys)
-        self.selected_equipment = [
-            self.shop_equipment[key] for key in equipment_keys[:3]
-        ]
-        
+        # Randomly select 3 equipment using weighted rarity
+        pool = list(self.shop_equipment.values())
+        weights = [RARITY_WEIGHTS.get(getattr(it, 'rarity', 'Normal'), 0) for it in pool]
+        selected = []
+        for _ in range(min(3, len(pool))):
+            total = sum(weights)
+            if total <= 0:
+                break
+            r = _rnd.random() * total
+            cum = 0.0
+            idx = 0
+            for i, w in enumerate(weights):
+                cum += w
+                if r <= cum:
+                    idx = i
+                    break
+            selected.append(pool.pop(idx))
+            weights.pop(idx)
+        self.selected_equipment = selected
+
         # Combine for easier iteration
         self.shop_items = self.selected_consumables + self.selected_equipment
     
@@ -359,13 +401,28 @@ class Shop:
         pygame.draw.rect(screen, (28, 28, 38), tooltip_rect, border_radius=8)
         pygame.draw.rect(screen, (180, 170, 200), tooltip_rect, width=1, border_radius=8)
         
-        # Draw icon
+        # Draw icon (use image if available)
         icon_rect = pygame.Rect(tooltip_rect.x + 10, tooltip_rect.y + 10, 24, 24)
-        pygame.draw.rect(screen, item.color, icon_rect, border_radius=6)
-        if hasattr(item, 'icon_letter'):
-            icon_font = get_font(14, bold=True)
-            icon_surf = icon_font.render(item.icon_letter, True, (10, 10, 20))
-            screen.blit(icon_surf, icon_surf.get_rect(center=icon_rect.center))
+        icon_surf = None
+        if hasattr(item, 'icon_path') and item.icon_path:
+            # Prefer real alpha icons
+            surf = _safe_load_icon(item.icon_path, (24,24))
+            if surf:
+                icon_surf = surf
+            else:
+                # Use masked placeholder so it respects rounded corners
+                try:
+                    icon_surf = load_icon_masked(item.icon_path, (24,24), radius=6)
+                except Exception:
+                    icon_surf = None
+        if icon_surf:
+            screen.blit(icon_surf, icon_rect)
+        else:
+            pygame.draw.rect(screen, item.color, icon_rect, border_radius=6)
+            if hasattr(item, 'icon_letter'):
+                icon_font = get_font(14, bold=True)
+                icon_surf2 = icon_font.render(item.icon_letter, True, (10, 10, 20))
+                screen.blit(icon_surf2, icon_surf2.get_rect(center=icon_rect.center))
         
         # Draw text
         text_x = tooltip_rect.x + 10 + icon_space
@@ -431,17 +488,32 @@ class Shop:
                 pygame.draw.rect(screen, (255, 210, 120), item_rect, width=2, border_radius=8)
             else:
                 pygame.draw.rect(screen, (40, 40, 50), item_rect, border_radius=8)
-                pygame.draw.rect(screen, (100, 100, 120), item_rect, width=1, border_radius=8)
+                # Use rarity color for the item border when not selected
+                border_col = rarity_border_color(item) if not (i == self.selection) else (255, 210, 120)
+                pygame.draw.rect(screen, border_col, item_rect, width=1, border_radius=8)
             
-            # Item icon (left side)
+            # Item icon (left side) - try image first
             icon_rect = pygame.Rect(item_x + 15, item_y + 15, 50, 50)
-            pygame.draw.rect(screen, item.color, icon_rect, border_radius=6)
-            
-            # Item icon letter
-            if hasattr(item, 'icon_letter'):
-                icon_text = get_font(24, bold=True).render(item.icon_letter, True, (20, 20, 28))
-                icon_text_rect = icon_text.get_rect(center=icon_rect.center)
-                screen.blit(icon_text, icon_text_rect)
+            icon_surf = None
+            if hasattr(item, 'icon_path') and item.icon_path:
+                # Prefer images with real transparency
+                surf = _safe_load_icon(item.icon_path, (50,50))
+                if surf:
+                    icon_surf = surf
+                else:
+                    # Mask the placeholder to fit rounded rect
+                    try:
+                        icon_surf = load_icon_masked(item.icon_path, (50,50), radius=6)
+                    except Exception:
+                        icon_surf = None
+            if icon_surf:
+                screen.blit(icon_surf, icon_rect)
+            else:
+                pygame.draw.rect(screen, item.color, icon_rect, border_radius=6)
+                if hasattr(item, 'icon_letter'):
+                    icon_text = get_font(24, bold=True).render(item.icon_letter, True, (20, 20, 28))
+                    icon_text_rect = icon_text.get_rect(center=icon_rect.center)
+                    screen.blit(icon_text, icon_text_rect)
             
             # Display stock amount for consumables (bottom left of icon)
             if hasattr(item, 'use'):  # Consumable

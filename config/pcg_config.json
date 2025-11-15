@@ -1,6 +1,6 @@
 {
   "pcg_config": {
-    "use_pcg": true,
+    "use_pcg": false,
     "seed_mode": "random",
     "seed": 1784473909,
     "num_levels": 3,
@@ -15,6 +15,11 @@
     "door_exit_1_tile_id": 4,
     "door_exit_2_tile_id": 5,
     "initial_fill_walls": true,
-    "quadrant_radius": 10
+    "quadrant_radius": 10,
+    "ca_smoothing_iterations": 3,
+    "ca_wall_neighbor_threshold": 5,
+    "ca_include_diagonals": true,
+    "post_ca_dilation_iterations": 1,
+    "post_ca_dilation_radius": 1
   }
 }

@@ -2,11 +2,61 @@ import pygame
 import random
 from config import WIDTH, HEIGHT, FPS, WHITE
 from ..core.utils import draw_text, get_font
-from .items import Consumable, HealConsumable, ManaConsumable, SpeedConsumable, JumpBoostConsumable, StaminaBoostConsumable, build_armament_catalog, build_consumable_catalog
+from .items import Consumable, HealConsumable, ManaConsumable, SpeedConsumable, JumpBoostConsumable, StaminaBoostConsumable, build_armament_catalog, build_consumable_catalog, load_icon, icon_has_transparency, load_icon_masked
 from ..entities.entities import floating, DamageNumber
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Any
+from typing import Optional as _Optional
+from typing import Tuple
+
+
+def _safe_load_icon(path: str, size: tuple = (24,24)) -> _Optional[pygame.Surface]:
+    """Return loaded surface only if the image contains transparent pixels."""
+    if not path:
+        return None
+    try:
+        surf = load_icon(path, size)
+    except Exception:
+        return None
+    if not surf:
+        return None
+    try:
+        if icon_has_transparency(path, size):
+            return surf
+    except Exception:
+        # Conservative: if transparency check fails, treat as opaque
+        return None
+    return None
+
+
+def _draw_icon_in_rect(surface: pygame.Surface, rect: pygame.Rect, obj: Any, font: pygame.font.Font, radius: int = 6) -> None:
+    """Draw an icon (true-alpha, masked placeholder, or letter) centered in `rect`.
+
+    `obj` may be an item-like object with attributes `icon_path` and `icon_letter`.
+    """
+    size = (max(4, rect.width - 8), max(4, rect.height - 8))
+    icon_img = None
+    try:
+        path = getattr(obj, 'icon_path', None)
+        if path:
+            icon_img = _safe_load_icon(path, size)
+            if not icon_img:
+                icon_img = load_icon_masked(path, size, radius=radius)
+    except Exception:
+        icon_img = None
+    if icon_img:
+        surface.blit(icon_img, icon_img.get_rect(center=rect.center))
+        return
+    # fallback to letter
+    letter = getattr(obj, 'icon_letter', None) or ''
+    if letter:
+        try:
+            letter_surf = font.render(letter, True, (20, 20, 28))
+            surface.blit(letter_surf, letter_surf.get_rect(center=rect.center))
+        except Exception:
+            return
+    return
 
 @dataclass
 class ConsumableStack:
@@ -735,8 +785,17 @@ class Inventory:
                         count_surface = count_font.render(str(total), True, (250, 250, 255))
                         count_rect = count_surface.get_rect(bottomright=(cell.right - 4, cell.bottom - 4))
                         self.game.screen.blit(count_surface, count_rect)
-                icon_surface = icon_font.render(entry.icon_letter, True, (20, 20, 28))
-                self.game.screen.blit(icon_surface, icon_surface.get_rect(center=cell.center))
+                # Prefer true-alpha icon, else masked placeholder, else letter
+                icon_img = None
+                if hasattr(entry, 'icon_path') and entry.icon_path:
+                    icon_img = _safe_load_icon(entry.icon_path, (cell_size, cell_size))
+                    if not icon_img:
+                        icon_img = load_icon_masked(entry.icon_path, (cell_size, cell_size), radius=8)
+                if icon_img:
+                    self.game.screen.blit(icon_img, icon_img.get_rect(center=cell.center))
+                else:
+                    icon_surface = icon_font.render(entry.icon_letter, True, (20, 20, 28))
+                    self.game.screen.blit(icon_surface, icon_surface.get_rect(center=cell.center))
             region_kind = 'gear_pool' if mode == 'gear' else 'consumable_pool'
             self._register_inventory_region(cell, region_kind, key=key)
         
@@ -842,10 +901,19 @@ class Inventory:
             
             if item:
                 pygame.draw.rect(self.game.screen, item.color, rect.inflate(-8, -8), border_radius=6)
-                icon_surf = icon_font.render(item.icon_letter, True, (20,20,28))
-                self.game.screen.blit(icon_surf, icon_surf.get_rect(center=rect.center))
+                # Prefer true-alpha icon, else masked placeholder, else letter
+                icon_img = None
+                if hasattr(item, 'icon_path') and item.icon_path:
+                    icon_img = _safe_load_icon(item.icon_path, (rect.width-8, rect.height-8))
+                    if not icon_img:
+                        icon_img = load_icon_masked(item.icon_path, (rect.width-8, rect.height-8), radius=6)
+                if icon_img:
+                    self.game.screen.blit(icon_img, icon_img.get_rect(center=rect.center))
+                else:
+                    icon_surf = icon_font.render(item.icon_letter, True, (20,20,28))
+                    self.game.screen.blit(icon_surf, icon_surf.get_rect(center=rect.center))
             else:
-                 draw_text(self.game.screen, str(idx+1), (rect.centerx-4, rect.centery-8), (80,90,110), size=18)
+                draw_text(self.game.screen, str(idx+1), (rect.centerx-4, rect.centery-8), (80,90,110), size=18)
             pygame.draw.rect(self.game.screen, border_color, rect, width=2, border_radius=8)
 
 
@@ -863,10 +931,11 @@ class Inventory:
             if selection and selection.get('kind') == 'consumable_slot' and selection.get('index') == idx:
                 border_color = (255, 210, 120)
 
+            # Draw entry contents regardless of selection; selection only affects border color
             if entry:
                 pygame.draw.rect(self.game.screen, entry.color, rect.inflate(-8, -8), border_radius=6)
-                icon_surf = icon_font.render(entry.icon_letter, True, (20,20,28))
-                self.game.screen.blit(icon_surf, icon_surf.get_rect(center=rect.center))
+                # Prefer true-alpha icon, else masked placeholder, else letter
+                _draw_icon_in_rect(self.game.screen, rect, entry, icon_font, radius=6)
                 if stack:
                     total_count = self._total_available_count(stack.key)
                     if total_count > 1:
@@ -993,8 +1062,7 @@ class Inventory:
                     if equipped_count > 0:
                         border_col = (120, 230, 180)
                     pygame.draw.rect(stock_surface, border_col, cell, width=2, border_radius=8)
-                    icon_surface = icon_font.render(entry.icon_letter, True, (20, 20, 28))
-                    stock_surface.blit(icon_surface, icon_surface.get_rect(center=cell.center))
+                    _draw_icon_in_rect(stock_surface, cell, entry, icon_font, radius=6)
                 elif self.inventory_stock_mode == 'consumable':
                     # Map from body surface to screen coords for hit regions
                     self._register_inventory_region(cell.move(body_rect.topleft), 'consumable_pool', key=key)
@@ -1012,8 +1080,7 @@ class Inventory:
                     elif any(s and s.key == key for s in self.consumable_slots):
                         border_col = (120, 230, 180)
                     pygame.draw.rect(stock_surface, border_col, cell, width=2, border_radius=8)
-                    icon_surface = icon_font.render(entry.icon_letter, True, (20, 20, 28))
-                    stock_surface.blit(icon_surface, icon_surface.get_rect(center=cell.center))
+                    _draw_icon_in_rect(stock_surface, cell, entry, icon_font, radius=6)
                     
                     # Display the count for consumables in stock
                     total_count = self._total_available_count(key)

@@ -43,6 +43,8 @@ def load_pcg_config(config_path: str = "config/pcg_config.json") -> PCGConfig:
             'air_tile_id', 'wall_tile_id', 'add_doors',
             'door_entrance_tile_id', 'door_exit_tile_id',
             'door_exit_1_tile_id', 'door_exit_2_tile_id',
+            'ca_smoothing_iterations', 'ca_wall_neighbor_threshold', 'ca_include_diagonals',
+            'post_ca_dilation_iterations', 'post_ca_dilation_radius',
         }
         filtered = {k: v for k, v in config_data.items() if k in allowed_keys}
         return PCGConfig(**filtered)

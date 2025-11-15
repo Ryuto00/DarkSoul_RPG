@@ -66,12 +66,9 @@ class Game:
         
         self.pcg_seed = seed
         
-        # If PCG is enabled, generate and load level set up-front
-        if self.use_pcg:
-            level_set = generate_simple_pcg_level_set(seed=self.pcg_seed)
-            # Save so LevelLoader can see it (matches its default path)
-            level_set.save_to_json("data/levels/generated_levels.json")
-            level_loader._level_set = level_set  # inject directly to avoid reload
+        # Only generate levels if PCG is enabled AND we actually need them
+        # Skip generation entirely - will only generate when "Start Game" is selected
+        # This saves resources when PCG is disabled or when game hasn't started yet
         
         # Door interaction state
         self.interaction_prompt = None
@@ -283,6 +280,49 @@ class Game:
         hitboxes.clear()
         floating.clear()
 
+    def _ensure_pcg_levels_generated(self):
+        """Generate PCG levels only if needed and seed has changed."""
+        if not self.use_pcg:
+            print("PCG disabled - skipping generation")
+            return False
+            
+        from src.level.level_loader import level_loader
+        from src.level.config_loader import load_pcg_runtime_config
+        import os
+        import json
+        
+        # Check current runtime config
+        runtime = load_pcg_runtime_config()
+        current_seed = runtime.seed if runtime.seed_mode == "fixed" else self.pcg_seed
+        
+        # Check if we already have generated levels with this seed
+        need_generation = True
+        generated_file = "data/levels/generated_levels.json"
+        
+        if os.path.exists(generated_file):
+            try:
+                with open(generated_file, 'r') as f:
+                    data = json.load(f)
+                    saved_seed = data.get('seed')
+                    if saved_seed == current_seed:
+                        # Load existing levels instead of regenerating
+                        from src.level.pcg_level_data import LevelSet
+                        level_set = LevelSet.load_from_json(generated_file)
+                        level_loader._level_set = level_set
+                        need_generation = False
+            except Exception:
+                # If there's any error reading the file, we'll regenerate
+                pass
+        
+        if need_generation:
+            from src.level.pcg_generator_simple import generate_simple_pcg_level_set
+            level_set = generate_simple_pcg_level_set(seed=current_seed)
+            level_set.save_to_json(generated_file)
+            level_loader._level_set = level_set
+            return True
+        
+        return False
+
     def _load_level(self, level_number: Optional[int] = None, room_id: Optional[str] = None, initial: bool = False):
         """
         Load a level - load specific room from legacy or PCG system.
@@ -294,6 +334,8 @@ class Game:
         """
         
         if self.use_pcg:
+            # Generate levels only when actually needed (when starting game)
+            self._ensure_pcg_levels_generated()
             self._load_pcg_level(level_number, room_id, initial)
         else:
             self._load_static_level(level_number or 0, initial)
@@ -982,7 +1024,15 @@ class Game:
             logger.exception('HUD draw failed')
 
         if self.inventory.inventory_open:
-            self.inventory.draw_inventory_overlay()
+            try:
+                self.inventory.draw_inventory_overlay()
+            except Exception:
+                logger.exception("Inventory draw failed; closing inventory to avoid crash")
+                try:
+                    self.inventory.inventory_open = False
+                    self.inventory._clear_inventory_selection()
+                except Exception:
+                    pass
         
         # Draw shop if open
         if self.shop.shop_open:
