@@ -35,6 +35,34 @@ def _is_excluded(room: RoomData, x: int, y: int) -> bool:
     return False
 
 
+def _is_in_door_carve_area(room: RoomData, x: int, y: int) -> bool:
+    """Check if a position is within any door carve area."""
+    areas = getattr(room, 'areas', []) or []
+    for a in areas:
+        if not isinstance(a, dict):
+            continue
+        if a.get('kind') == 'door_carve':
+            rects = a.get('rects') or []
+            for r in rects:
+                rx = int(r.get('x', 0))
+                ry = int(r.get('y', 0))
+                rw = int(r.get('w', 0))
+                rh = int(r.get('h', 0))
+                if rx <= x < rx + rw and ry <= y < ry + rh:
+                    return True
+    return False
+
+
+def _platform_intersects_door_area(room: RoomData, x: int, y: int, width: int, height: int = 1) -> bool:
+    """Check if a platform rectangle intersects any door carve area."""
+    # Check all tiles in the platform area
+    for py in range(y, y + height):
+        for px in range(x, x + width):
+            if _is_in_door_carve_area(room, px, py):
+                return True
+    return False
+
+
 def _add_platform_area(room: RoomData, x: int, y: int, width: int = 1, height: int = 1) -> None:
     areas = getattr(room, 'areas', []) or []
     areas.append({
@@ -424,20 +452,18 @@ def add_floating_platforms(
                     
                 # Check if we can place platform here
                 can_place = True
-                for xi in range(x_start, x_start + width):
-                    if _is_excluded(room, xi, platform_y):
-                        can_place = False; break
-                    if tiles[platform_y][xi] != air_id:
-                        can_place = False; break
-                    # Check door areas
-                    for a in getattr(room, 'areas', []) or []:
-                        if a.get('kind') == 'door_carve':
-                            for r in a.get('rects', []):
-                                rx = int(r.get('x',0)); ry = int(r.get('y',0)); rw = int(r.get('w',1)); rh = int(r.get('h',1))
-                                if rx <= xi < rx + rw and ry <= platform_y < ry + rh:
-                                    can_place = False; break
-                            if not can_place:
-                                break
+                
+                # First check: Does the entire platform intersect any door carve area?
+                if _platform_intersects_door_area(room, x_start, platform_y, width, 1):
+                    can_place = False
+                
+                # Second check: Individual tile checks
+                if can_place:
+                    for xi in range(x_start, x_start + width):
+                        if _is_excluded(room, xi, platform_y):
+                            can_place = False; break
+                        if tiles[platform_y][xi] != air_id:
+                            can_place = False; break
                     if not can_place:
                         break
                         
@@ -460,14 +486,24 @@ def add_floating_platforms(
                             saved_tiles.append((xi, platform_y - 1, tiles[platform_y - 1][xi]))
                             # Only clear to air if it's not a door tile
                             is_door_tile = False
-                            for a in getattr(room, 'areas', []) or []:
-                                if a.get('kind') == 'door_carve':
-                                    for r in a.get('rects', []):
-                                        rx = int(r.get('x',0)); ry = int(r.get('y',0)); rw = int(r.get('w',1)); rh = int(r.get('h',1))
-                                        if rx <= xi < rx + rw and ry <= (platform_y - 1) < ry + rh:
-                                            is_door_tile = True; break
-                                    if is_door_tile:
-                                        break
+                            
+                            # Check if this tile is already a door tile by value
+                            from src.tiles.tile_types import TileType
+                            current_tile_value = tiles[platform_y - 1][xi]
+                            if current_tile_value in (TileType.DOOR_ENTRANCE.value, TileType.DOOR_EXIT_1.value, TileType.DOOR_EXIT_2.value):
+                                is_door_tile = True
+                            else:
+                                # Also check if this position is in a door carve area
+                                room_areas = getattr(room, 'areas', []) or []
+                                for a in room_areas:
+                                    if a.get('kind') == 'door_carve':
+                                        for r in a.get('rects', []):
+                                            rx = int(r.get('x',0)); ry = int(r.get('y',0)); rw = int(r.get('w',1)); rh = int(r.get('h',1))
+                                            if rx <= xi < rx + rw and ry <= (platform_y - 1) < ry + rh:
+                                                is_door_tile = True; break
+                                        if is_door_tile:
+                                            break
+                            
                             if not is_door_tile:
                                 tiles[platform_y - 1][xi] = air_id
                     
@@ -611,17 +647,16 @@ def add_floating_platforms(
                     if x0_try <= 0 or x0_try + width >= w:
                         continue
                     bad = False
-                    for xi in range(x0_try, x0_try + width):
-                        if _is_excluded(room, xi, new_solid_y):
-                            bad = True; break
-                        for a in getattr(room, 'areas', []) or []:
-                            if a.get('kind') == 'door_carve':
-                                for r in a.get('rects', []):
-                                    rx = int(r.get('x',0)); ry = int(r.get('y',0)); rw = int(r.get('w',1)); rh = int(r.get('h',1))
-                                    if rx <= xi < rx + rw and ry <= new_solid_y < ry + rh:
-                                        bad = True; break
-                                if bad:
-                                    break
+                    
+                    # First check: Does the entire platform intersect any door carve area?
+                    if _platform_intersects_door_area(room, x0_try, new_solid_y, width, 1):
+                        bad = True
+                    
+                    # Second check: Individual tile checks
+                    if not bad:
+                        for xi in range(x0_try, x0_try + width):
+                            if _is_excluded(room, xi, new_solid_y):
+                                bad = True; break
                         if bad:
                             break
                     if bad:
@@ -642,7 +677,11 @@ def add_floating_platforms(
                         tiles[new_solid_y][xi] = wall_id
                         if new_solid_y - 1 >= 0:
                             saved.append((xi, new_solid_y - 1, tiles[new_solid_y - 1][xi]))
-                            tiles[new_solid_y - 1][xi] = air_id
+                            # Check if this is a door tile before clearing to air
+                            from src.tiles.tile_types import TileType
+                            current_tile_value = tiles[new_solid_y - 1][xi]
+                            if current_tile_value not in (TileType.DOOR_ENTRANCE.value, TileType.DOOR_EXIT_1.value, TileType.DOOR_EXIT_2.value):
+                                tiles[new_solid_y - 1][xi] = air_id
                     if not exits_still_ok(tiles):
                         for xi, yi, val in reversed(saved):
                             tiles[yi][xi] = val
@@ -741,18 +780,16 @@ def add_floating_platforms(
                     if x0_try < rx or x0_try + width > rx + rw:
                         continue
                     bad = False
-                    for xi in range(x0_try, x0_try + width):
-                        if _is_excluded(room, xi, new_solid_y):
-                            bad = True; break
-                        # avoid door_carve overlap
-                        for aa in getattr(room, 'areas', []) or []:
-                            if aa.get('kind') == 'door_carve':
-                                for rr in aa.get('rects', []):
-                                    rxx = int(rr.get('x',0)); ryy = int(rr.get('y',0)); rww = int(rr.get('w',1)); rhh = int(rr.get('h',1))
-                                    if rxx <= xi < rxx + rww and ryy <= new_solid_y < ryy + rhh:
-                                        bad = True; break
-                                if bad:
-                                    break
+                    
+                    # First check: Does entire platform intersect any door carve area?
+                    if _platform_intersects_door_area(room, x0_try, new_solid_y, width, 1):
+                        bad = True
+                    
+                    # Second check: Individual tile checks
+                    if not bad:
+                        for xi in range(x0_try, x0_try + width):
+                            if _is_excluded(room, xi, new_solid_y):
+                                bad = True; break
                         if bad:
                             break
                     if bad:
@@ -771,7 +808,11 @@ def add_floating_platforms(
                         tiles[new_solid_y][xi] = wall_id
                         if new_solid_y - 1 >= 0:
                             saved.append((xi, new_solid_y - 1, tiles[new_solid_y - 1][xi]))
-                            tiles[new_solid_y - 1][xi] = air_id
+                            # Check if this is a door tile before clearing to air
+                            from src.tiles.tile_types import TileType
+                            current_tile_value = tiles[new_solid_y - 1][xi]
+                            if current_tile_value not in (TileType.DOOR_ENTRANCE.value, TileType.DOOR_EXIT_1.value, TileType.DOOR_EXIT_2.value):
+                                tiles[new_solid_y - 1][xi] = air_id
                     if not exits_still_ok(tiles):
                         for xi, yi, val in reversed(saved):
                             tiles[yi][xi] = val
@@ -802,12 +843,19 @@ def add_floating_platforms(
         x1 = x0 + deco_width
         ok = True
         would_change = []
-        for xi in range(x0, x1):
-            if xi <= 0 or xi >= w - 1 or tiles[row_y][xi] != air_id or _is_excluded(room, xi, row_y):
-                ok = False; break
-            if (xi, row_y) in baseline_standable:
-                ok = False; break
-            would_change.append(xi)
+        
+        # First check: Does decorative platform intersect any door carve area?
+        if _platform_intersects_door_area(room, x0, row_y, deco_width, 1):
+            ok = False
+        
+        # Second check: Individual tile checks
+        if ok:
+            for xi in range(x0, x1):
+                if xi <= 0 or xi >= w - 1 or tiles[row_y][xi] != air_id or _is_excluded(room, xi, row_y):
+                    ok = False; break
+                if (xi, row_y) in baseline_standable:
+                    ok = False; break
+                would_change.append(xi)
         if not ok or not would_change:
             continue
 
@@ -824,7 +872,11 @@ def add_floating_platforms(
             tiles[row_y][xi] = wall_id
             if row_y - 1 >= 0:
                 saved.append((xi, row_y - 1, tiles[row_y - 1][xi]))
-                tiles[row_y - 1][xi] = air_id
+                # Check if this is a door tile before clearing to air
+                from src.tiles.tile_types import TileType
+                current_tile_value = tiles[row_y - 1][xi]
+                if current_tile_value not in (TileType.DOOR_ENTRANCE.value, TileType.DOOR_EXIT_1.value, TileType.DOOR_EXIT_2.value):
+                    tiles[row_y - 1][xi] = air_id
         if not exits_still_ok(tiles):
             for xi, yi, val in reversed(saved):
                 tiles[yi][xi] = val
@@ -1100,6 +1152,9 @@ def add_enemy_spawn_areas(
                 'spawn_surface': surface,
             }
 
+            # Ensure room.areas is a list
+            if room.areas is None:
+                room.areas = []
             room.areas.append({
                 'kind': 'spawn',
                 'rects': [{'x': x0, 'y': y0, 'w': rw, 'h': rh}],
