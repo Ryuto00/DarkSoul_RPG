@@ -279,7 +279,7 @@ def add_floating_platforms(
     config: PCGConfig,
     rng: Optional[random.Random] = None,
     tile_size: int = 24,
-    max_platforms_per_room: int = 40,
+    max_platforms_per_room: int = 80,  # INCREASED from 40
     prefer_double_jump: bool = False,
     vertical_clearance: int = 2,
     deco_chance: float = 0.35,
@@ -317,18 +317,17 @@ def add_floating_platforms(
         for tx, ty in exit_rect_tiles(ex, ey, ew, eh):
             if (tx, ty) in baseline_standable:
                 reachable = True; break
-            # conservative reachable test: check if any baseline standable tile can jump up to this tile
+            # Check if any baseline standable tile can reach this exit tile
             for sx, sy in baseline_standable:
-                if sy - ty <= 0:
-                    continue
-                vert = sy - ty
                 h_single_px, d_single_px = profile.compute_single_jump_metrics()
                 tile_h = max(1, int(h_single_px // max(1, tile_size)))
-                if vert > tile_h:
-                    continue
+                tile_d = max(1, int(d_single_px // max(1, tile_size)))
+                
+                vert = sy - ty  # positive = exit is higher, negative = exit is lower
                 dx = abs(sx - tx)
-                tile_d = max(1, int(profile.compute_single_jump_metrics()[1] // max(1, tile_size)))
-                if dx <= tile_d:
+                
+                # Can reach if: horizontal OK AND (going down OR vertical jump OK)
+                if dx <= tile_d and (vert <= 0 or vert <= tile_h):
                     reachable = True; break
             if reachable:
                 break
@@ -396,13 +395,17 @@ def add_floating_platforms(
         steps = 0
         last_platform_x, last_platform_y = cur_x, cur_y
         
-        # <-- MODIFIED: Increased step limit from 25
+        # <-- MODIFIED: Increased step limit and failure tolerance
         consecutive_failures = 0
-        while steps < 100 and platforms_added < max_platforms_per_room and consecutive_failures < 20:
+        while steps < 150 and platforms_added < max_platforms_per_room and consecutive_failures < 30:
             steps += 1
             
             # Check if target is reachable from current position
-            if abs(cur_x - target_x) <= tile_jump_d and abs(cur_y - target_y) <= tile_jump_h:
+            horizontal_dist = abs(cur_x - target_x)
+            vertical_dist = cur_y - target_y  # positive = target is higher, negative = target is lower
+            
+            # Can reach if horizontal distance is OK AND (going down OR vertical jump is OK)
+            if horizontal_dist <= tile_jump_d and (vertical_dist <= 0 or vertical_dist <= tile_jump_h):
                 break
                 
             # Calculate next platform position - move toward target
@@ -439,11 +442,42 @@ def add_floating_platforms(
                 if steps > 1:  # Not the first platform
                     # Check if we can jump from last platform to this one
                     dist_x = abs(x_start + width // 2 - last_platform_x)
-                    dist_y = (last_platform_y) - (platform_y - 1) # vertical diff (positive=up)
+                    dist_y = (last_platform_y) - (platform_y - 1) # vertical diff (positive=up, negative=down)
                     
-                    if dist_x > tile_jump_d or dist_y > tile_jump_h:
+                    # Horizontal distance must ALWAYS be within jump range
+                    if dist_x > tile_jump_d:
                         can_connect = False
-                        # print(f"[DEBUG] CONNECTION FAILED: dist_x={dist_x} > jump_d={tile_jump_d} OR dist_y={dist_y} > jump_h={tile_jump_h}")
+                        # print(f"[DEBUG] CONNECTION FAILED: dist_x={dist_x} > jump_d={tile_jump_d}")
+                    # For upward jumps, check vertical limit
+                    elif dist_y > tile_jump_h:
+                        can_connect = False
+                        # print(f"[DEBUG] CONNECTION FAILED: dist_y={dist_y} > jump_h={tile_jump_h}")
+                    # For downward jumps, you can fall any distance, but still need horizontal reach
+                    # (already checked above)
+                    else:
+                        # Additional check: Is the path actually clear?
+                        # Only check path clearance for UPWARD jumps (downward can often navigate around obstacles)
+                        if dist_y > 0:  # Only validate path for upward jumps
+                            # Validate that the jump arc has clearance (no ceiling blocking)
+                            min_x = min(last_platform_x, x_start + width // 2)
+                            max_x = max(last_platform_x, x_start + width // 2)
+                            min_y = min(last_platform_y, platform_y - 1)
+                            
+                            # Check for obstacles in the jump path (simplified arc check)
+                            # Add vertical_clearance tiles above for player height (2 tiles)
+                            path_blocked = False
+                            for check_x in range(max(1, min_x), min(w - 1, max_x + 1)):
+                                for check_y in range(max(1, min_y - vertical_clearance - 1), max(1, min_y + 1)):
+                                    if check_y >= h - 1:
+                                        continue
+                                    if tiles[check_y][check_x] != air_id:
+                                        path_blocked = True
+                                        break
+                                if path_blocked:
+                                    break
+                            
+                            if path_blocked:
+                                can_connect = False
                     # else:
                         # print(f"[DEBUG] CONNECTION OK: dist_x={dist_x} <= jump_d={tile_jump_d} AND dist_y={dist_y} <= jump_h={tile_jump_h}")
                         
@@ -466,6 +500,18 @@ def add_floating_platforms(
                             can_place = False; break
                     if not can_place:
                         break
+                    
+                    # Third check: Ensure vertical clearance above platform for player (2 tiles high)
+                    for xi in range(x_start, x_start + width):
+                        for dy in range(1, vertical_clearance + 1):  # Check 2 tiles above
+                            check_y = platform_y - dy
+                            if check_y < 1 or check_y >= h - 1:
+                                continue
+                            if tiles[check_y][xi] != air_id:
+                                can_place = False
+                                break
+                        if not can_place:
+                            break
                         
                 if can_place:
                     # --- NEW GAP CHECK ---
@@ -507,8 +553,9 @@ def add_floating_platforms(
                             if not is_door_tile:
                                 tiles[platform_y - 1][xi] = air_id
                     
-                    # <-- NEW: Run safety check
-                    if not exits_still_ok(tiles):
+                    # <-- NEW: Run safety check (but be less aggressive)
+                    # Only check if we've placed many platforms already (to avoid early rejections)
+                    if platforms_added > 10 and not exits_still_ok(tiles):
                         # REVERT: This platform blocked another path
                         for xi, yi, val in reversed(saved_tiles):
                             tiles[yi][xi] = val
@@ -533,18 +580,30 @@ def add_floating_platforms(
                 consecutive_failures += 1
                 
                 # If we've failed too many times, give up on this path
-                if consecutive_failures >= 10:
+                if consecutive_failures >= 20:  # INCREASED from 10
+                    import logging
+                    logging.getLogger(__name__).warning(f"Failed to build {path_name}: stuck after {steps} steps, {consecutive_failures} consecutive failures, platforms_added={platforms_added}")
                     break
                 
                 # Nudge current position randomly - be more aggressive when stuck
                 if consecutive_failures >= 5:
-                    # After 5 failures, try bigger random jumps
-                    cur_x = max(2, min(w - 2, rng.randint(2, w - 3)))
-                    cur_y = max(2, min(h - 2, rng.randint(2, h - 3)))
+                    # After 5 failures, try restarting closer to target
+                    # Move halfway toward target, but ensure it's reachable from last platform
+                    nudge_x = (last_platform_x + target_x) // 2
+                    nudge_y = (last_platform_y + target_y) // 2
+                    
+                    # Ensure nudge is within jump range of last platform
+                    if abs(nudge_x - last_platform_x) > tile_jump_d:
+                        nudge_x = last_platform_x + tile_jump_d if nudge_x > last_platform_x else last_platform_x - tile_jump_d
+                    if (last_platform_y - nudge_y) > tile_jump_h:  # Check upward distance
+                        nudge_y = last_platform_y - tile_jump_h
+                    
+                    cur_x = max(2, min(w - 3, nudge_x))
+                    cur_y = max(2, min(h - 3, nudge_y))
                 else:
-                    # Normal nudging
+                    # Normal nudging - stay within jump range
                     cur_x = max(2, min(w - 2, last_platform_x + rng.randint(-tile_jump_d // 2, tile_jump_d // 2)))
-                    cur_y = max(2, min(h - 2, last_platform_y + rng.randint(-tile_jump_h // 2, 0))) # Prefer nudging up, but stay away from top
+                    cur_y = max(2, min(h - 2, last_platform_y + rng.randint(-tile_jump_h // 2, 0))) # Prefer nudging up
                 
                 # Ensure new cur_pos is a valid standable spot
                 if cur_y >= h - 1 or cur_y <= 1 or tiles[cur_y][cur_x] != air_id or tiles[cur_y + 1][cur_x] == air_id:
@@ -556,12 +615,18 @@ def add_floating_platforms(
                 continue
 
     # 1. Build paths from entrance to unreachable exits
+    import logging
+    logger = logging.getLogger(__name__)
+    
     for dk, ex, ey, ew, eh in exits:
         if exit_initially_reachable.get(dk, False):
+            logger.debug(f"Exit {dk} already reachable, skipping platform path")
             continue  # Already reachable
-            
+        
+        logger.info(f"Building platform path from entrance to unreachable exit {dk} at ({ex}, {ey})")
         exit_centers = [(ex + ew // 2, ey + eh // 2)]
         build_connected_path(list(baseline_standable), exit_centers, f"entrance_to_{dk}", rng=rng)
+        logger.info(f"Finished building path to {dk}, platforms_added={platforms_added}")
 
     # 2. Build paths from pocket areas to exits (if pockets are trapped)
     pocket_areas = [a for a in getattr(room, 'areas', []) or [] if isinstance(a, dict) and a.get('kind') == 'pocket_room']
