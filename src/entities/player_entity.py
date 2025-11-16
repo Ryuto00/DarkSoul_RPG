@@ -184,10 +184,9 @@ class Player:
         }
         self.money = 0
 
-        # Initialize animation system for Ranger/Archer class (call after all properties set)
+        # Initialize animation system (call after all properties set)
         self.anim_manager = None
-        if cls == 'Ranger':
-            self._setup_ranger_animations()
+        self._setup_animations(cls)
 
     @property
     def visual_center(self):
@@ -198,111 +197,288 @@ class Player:
             return (self.rect.centerx, self.rect.centery - 20)
         return self.rect.center
     
-    def _setup_ranger_animations(self):
-        """Setup animation system for Ranger class - clean implementation"""
+    def _setup_animations(self, cls):
+        """Setup animation system for any player class using universal AnimationManager"""
+        if cls not in ('Knight', 'Ranger'):
+            return  # No animations for other classes yet
+        
         try:
             self.anim_manager = AnimationManager(self, default_state=AnimationState.IDLE)
-            sprite_size = (48, 64)
             
-            # IDLE - Lowest priority, always available
-            self.anim_manager.load_animation(
-                AnimationState.IDLE,
-                ["assets/Player/Ranger/idle/Idle-1.png", "assets/Player/Ranger/idle/Idle-2.png"],
-                sprite_size=sprite_size,
-                frame_duration=10,
-                loop=True,
-                priority=0
-            )
-            
-            # RUN - Basic movement
-            self.anim_manager.load_animation(
-                AnimationState.RUN,
-                [f"assets/Player/Ranger/run/run-{i}.png" for i in range(1, 9)],
-                sprite_size=sprite_size,
-                frame_duration=5,
-                loop=True,
-                priority=1
-            )
-            
-            # JUMP - Moving upward
-            self.anim_manager.load_animation(
-                AnimationState.JUMP,
-                ["assets/Player/Ranger/jump.png"],
-                sprite_size=sprite_size,
-                frame_duration=1,
-                loop=True,
-                priority=2
-            )
-            
-            # FALL - Moving downward
-            self.anim_manager.load_animation(
-                AnimationState.FALL,
-                ["assets/Player/Ranger/fall.png"],
-                sprite_size=sprite_size,
-                frame_duration=1,
-                loop=True,
-                priority=2
-            )
-            
-            # WALL_SLIDE - On wall
-            self.anim_manager.load_animation(
-                AnimationState.WALL_SLIDE,
-                ["assets/Player/Ranger/climb.png"],
-                sprite_size=sprite_size,
-                frame_duration=1,
-                loop=True,
-                priority=3
-            )
-            
-            # DASH - High priority action (but lower than shoot/charge so they can override)
-            self.anim_manager.load_animation(
-                AnimationState.DASH,
-                [f"assets/Player/Ranger/dash/dash-{i}.png" for i in range(1, 4)],
-                sprite_size=sprite_size,
-                frame_duration=3,
-                loop=False,
-                priority=3,  # Same as wall slide
-                next_state=AnimationState.IDLE
-            )
-            
-            # CHARGE - Drawing bow (progressive)
-            self.anim_manager.load_animation(
-                AnimationState.CHARGE,
-                [f"assets/Player/Ranger/attk-adjust/charge/na-{i}.png" for i in range(1, 5)],
-                sprite_size=sprite_size,
-                frame_duration=5,
-                loop=False,
-                priority=4,
-                next_state=AnimationState.CHARGED
-            )
-            
-            # CHARGED - Holding at full draw
-            self.anim_manager.load_animation(
-                AnimationState.CHARGED,
-                ["assets/Player/Ranger/attk-adjust/charged/na-5.png"],
-                sprite_size=sprite_size,
-                frame_duration=1,
-                loop=True,
-                priority=4
-            )
-            
-            # SHOOT - Releasing arrow
-            self.anim_manager.load_animation(
-                AnimationState.SHOOT,
-                ["assets/Player/Ranger/attk-adjust/shoot/na-5.png", 
-                 "assets/Player/Ranger/attk-adjust/shoot/na-6.png"],
-                sprite_size=sprite_size,
-                frame_duration=4,
-                loop=False,
-                priority=4,
-                next_state=AnimationState.IDLE
-            )
-            
+            if cls == 'Knight':
+                self._load_knight_animations()
+            elif cls == 'Ranger':
+                self._load_ranger_animations()
+                
             self.anim_manager.set_sprite_offset(0, 0)
-            logger.info("[Player] Ranger animations loaded successfully")
+            logger.info(f"[Player] {cls} animations loaded successfully")
         except Exception as e:
-            logger.exception(f"[Player] Failed to load Ranger animations: {e}")
+            logger.exception(f"[Player] Failed to load {cls} animations: {e}")
             self.anim_manager = None
+    
+    def _load_knight_animations(self):
+        """Load Knight animation frames into AnimationManager"""
+        sprite_size = (64, 64)
+        
+        # IDLE - Lowest priority, always available
+        self.anim_manager.load_animation(
+            AnimationState.IDLE,
+            [f"assets/Player/Knight/idle/Warrior_Idle_{i}.png" for i in range(1, 7)],
+            sprite_size=sprite_size,
+            frame_duration=8,
+            loop=True,
+            priority=0
+        )
+        
+        # RUN - Basic movement
+        self.anim_manager.load_animation(
+            AnimationState.RUN,
+            [f"assets/Player/Knight/Run/Warrior_Run_{i}.png" for i in range(1, 9)],
+            sprite_size=sprite_size,
+            frame_duration=6,
+            loop=True,
+            priority=1
+        )
+        
+        # JUMP - Moving upward
+        self.anim_manager.load_animation(
+            AnimationState.JUMP,
+            [f"assets/Player/Knight/Jump/Warrior_Jump_{i}.png" for i in range(1, 4)],
+            sprite_size=sprite_size,
+            frame_duration=4,
+            loop=False,
+            priority=2
+        )
+        
+        # FALL - Moving downward
+        self.anim_manager.load_animation(
+            AnimationState.FALL,
+            [f"assets/Player/Knight/Fall/Warrior_Fall_{i}.png" for i in range(1, 4)],
+            sprite_size=sprite_size,
+            frame_duration=4,
+            loop=False,
+            priority=2
+        )
+        
+        # WALL_SLIDE - On wall
+        self.anim_manager.load_animation(
+            AnimationState.WALL_SLIDE,
+            [f"assets/Player/Knight/WallSlide/Warrior_WallSlide_{i}.png" for i in range(1, 4)],
+            sprite_size=sprite_size,
+            frame_duration=6,
+            loop=True,
+            priority=3
+        )
+        
+        # DASH - High priority action
+        self.anim_manager.load_animation(
+            AnimationState.DASH,
+            [f"assets/Player/Knight/Dash/Warrior_Dash_{i}.png" for i in range(1, 8)],
+            sprite_size=sprite_size,
+            frame_duration=2,
+            loop=False,
+            priority=4,
+            next_state=AnimationState.IDLE
+        )
+        
+        # ATTACK - Main attack animation (9 frames)
+        self.anim_manager.load_animation(
+            AnimationState.ATTACK,
+            [f"assets/Player/Knight/Attack/Warrior_Attack_{i}.png" for i in range(4, 13)],
+            sprite_size=sprite_size,
+            frame_duration=2,
+            loop=False,
+            priority=5,
+            next_state=AnimationState.IDLE
+        )
+        
+        # Setup frame event: Spawn hitbox on frame 4 (mid-swing of 9-frame animation)
+        self.anim_manager.set_attack_frame(AnimationState.ATTACK, 4, self._spawn_knight_attack_hitbox)
+        
+        # SKILL_1 - Dash Attack animation (10 frames) for Knight charge skill
+        self.anim_manager.load_animation(
+            AnimationState.SKILL_1,
+            [f"assets/Player/Knight/Dash Attack/Warrior_Dash-Attack_{i}.png" for i in range(1, 11)],
+            sprite_size=sprite_size,
+            frame_duration=2,
+            loop=False,
+            priority=6,
+            next_state=AnimationState.IDLE
+        )
+        
+        # Setup frame event: Spawn dash attack hitbox on frame 3 (early in dash)
+        self.anim_manager.set_attack_frame(AnimationState.SKILL_1, 3, self._spawn_knight_dash_attack_hitbox)
+
+    def _load_ranger_animations(self):
+        """Load Ranger animation frames into AnimationManager"""
+        sprite_size = (48, 64)
+        
+        # IDLE - Lowest priority, always available
+        self.anim_manager.load_animation(
+            AnimationState.IDLE,
+            [f"assets/Player/Ranger/idle/Idle-{i}.png" for i in range(1, 3)],
+            sprite_size=sprite_size,
+            frame_duration=12,
+            loop=True,
+            priority=0
+        )
+        
+        # RUN - Basic movement
+        self.anim_manager.load_animation(
+            AnimationState.RUN,
+            [f"assets/Player/Ranger/run/run-{i}.png" for i in range(1, 9)],
+            sprite_size=sprite_size,
+            frame_duration=5,
+            loop=True,
+            priority=1
+        )
+        
+        # JUMP - Moving upward
+        self.anim_manager.load_animation(
+            AnimationState.JUMP,
+            ["assets/Player/Ranger/jump.png"],
+            sprite_size=sprite_size,
+            frame_duration=1,
+            loop=True,
+            priority=2
+        )
+        
+        # FALL - Moving downward
+        self.anim_manager.load_animation(
+            AnimationState.FALL,
+            ["assets/Player/Ranger/fall.png"],
+            sprite_size=sprite_size,
+            frame_duration=1,
+            loop=True,
+            priority=2
+        )
+        
+        # WALL_SLIDE - On wall
+        self.anim_manager.load_animation(
+            AnimationState.WALL_SLIDE,
+            ["assets/Player/Ranger/climb.png"],
+            sprite_size=sprite_size,
+            frame_duration=1,
+            loop=True,
+            priority=3
+        )
+        
+        # DASH - High priority action (but lower than shoot/charge so they can override)
+        self.anim_manager.load_animation(
+            AnimationState.DASH,
+            [f"assets/Player/Ranger/dash/dash-{i}.png" for i in range(1, 4)],
+            sprite_size=sprite_size,
+            frame_duration=3,
+            loop=False,
+            priority=3,  # Same as wall slide
+            next_state=AnimationState.IDLE
+        )
+        
+        # CHARGE - Drawing bow (progressive)
+        self.anim_manager.load_animation(
+            AnimationState.CHARGE,
+            [f"assets/Player/Ranger/attk-adjust/charge/na-{i}.png" for i in range(1, 5)],
+            sprite_size=sprite_size,
+            frame_duration=5,
+            loop=False,
+            priority=4,
+            next_state=AnimationState.CHARGED
+        )
+        
+        # CHARGED - Holding at full draw
+        self.anim_manager.load_animation(
+            AnimationState.CHARGED,
+            ["assets/Player/Ranger/attk-adjust/charged/na-5.png"],
+            sprite_size=sprite_size,
+            frame_duration=1,
+            loop=True,
+            priority=4
+        )
+        
+        # SHOOT - Releasing arrow
+        self.anim_manager.load_animation(
+            AnimationState.SHOOT,
+            ["assets/Player/Ranger/attk-adjust/shoot/na-5.png", 
+             "assets/Player/Ranger/attk-adjust/shoot/na-6.png"],
+            sprite_size=sprite_size,
+            frame_duration=4,
+            loop=False,
+            priority=4,
+            next_state=AnimationState.IDLE
+        )
+
+    def _update_knight_animations(self):
+        """Update Knight animation state - clean state machine with smoothing"""
+        if not self.anim_manager:
+            return
+        
+        # Smooth ground detection to prevent flicker (use coyote time concept)
+        if self.on_ground or self.coyote > 0:
+            self._anim_grounded_buffer = 5  # Stay "grounded" for animation for 5 frames
+        elif self._anim_grounded_buffer > 0:
+            self._anim_grounded_buffer -= 1
+        
+        anim_grounded = self._anim_grounded_buffer > 0
+        
+        current = self.anim_manager.current_state
+        
+        # Priority 1: SKILL_1 (Dash Attack) - don't interrupt while playing
+        if current == AnimationState.SKILL_1 and self.anim_manager.is_playing:
+            return
+        
+        # Priority 2: ATTACK (don't interrupt while playing)
+        if self.attack_cd > 0 and current == AnimationState.ATTACK and self.anim_manager.is_playing:
+            return
+        
+        # Priority 3: Start attack animation when attack begins
+        if self.attack_cd > 0 and self.attack_cd > (ATTACK_COOLDOWN - ATTACK_LIFETIME):
+            if current != AnimationState.ATTACK:
+                self.anim_manager.play(AnimationState.ATTACK, force=True)
+            return
+        
+        # Priority 4: DASH (only while actively dashing, and NOT during dash attack animation)
+        if self.dashing > 0 and current != AnimationState.SKILL_1:
+            if current != AnimationState.DASH:
+                self.anim_manager.play(AnimationState.DASH, force=True)
+            return
+        
+        # Priority 4: RUN (on ground + moving) - CHECK BEFORE WALL_SLIDE
+        # This prevents flicker when pushing into wall on ground
+        if anim_grounded and abs(self.vx) > 0.3:
+            if current != AnimationState.RUN:
+                self.anim_manager.play(AnimationState.RUN, force=True)
+            return
+        
+        # Priority 5: IDLE when grounded and not moving - CHECK BEFORE WALL_SLIDE
+        if anim_grounded:
+            if current != AnimationState.IDLE:
+                self.anim_manager.play(AnimationState.IDLE, force=True)
+            return
+        
+        # Priority 6: WALL_SLIDE (only when airborne)
+        # CRITICAL: Must be truly airborne (no ground contact at all) AND on wall AND falling
+        is_truly_airborne = not self.on_ground and self.coyote == 0 and self._anim_grounded_buffer == 0
+        is_on_wall = self.on_left_wall or self.on_right_wall
+        is_falling_on_wall = self.vy > 0  # Moving downward
+        
+        if is_truly_airborne and is_on_wall and is_falling_on_wall:
+            if current != AnimationState.WALL_SLIDE:
+                self.anim_manager.play(AnimationState.WALL_SLIDE, force=True)
+            return
+        
+        # Priority 7: AIR STATES (jump/fall) - only if clearly in air
+        if self.vy < -1.0:  # Rising with clear upward velocity
+            if current != AnimationState.JUMP:
+                self.anim_manager.play(AnimationState.JUMP, force=True)
+            return
+        elif self.vy > 1.0:  # Falling with clear downward velocity
+            if current != AnimationState.FALL:
+                self.anim_manager.play(AnimationState.FALL, force=True)
+            return
+        
+        # Priority 8: Final fallback to IDLE
+        if current != AnimationState.IDLE:
+            self.anim_manager.play(AnimationState.IDLE, force=True)
 
     def _update_ranger_animations(self):
         """Update Ranger animation state - clean state machine with smoothing"""
@@ -684,6 +860,51 @@ class Player:
         self.vy = 0
         self.vx = dash_direction * DASH_SPEED
 
+    def _spawn_knight_attack_hitbox(self):
+        """
+        Spawn Knight's normal attack hitbox.
+        Called automatically by frame event system on attack animation frame 4.
+        """
+        # Store attack direction when attack started (accessed via instance variables)
+        dir_vec = getattr(self, '_attack_dir_vec', (self.facing, 0))
+        
+        if dir_vec == (0, -1):
+            # upward hitbox (unchanged width, tall)
+            hb = pygame.Rect(0, 0, self.rect.w, int(self.rect.h * 0.9))
+            hb.midbottom = self.rect.midtop
+        elif dir_vec == (0, 1):
+            # downward hitbox (unchanged)
+            hb = pygame.Rect(0, 0, self.rect.w, int(self.rect.h * 1.2))
+            hb.midtop = self.rect.midbottom
+        else:
+            # forward hitbox: increase horizontal reach
+            hb = pygame.Rect(0, 0, int(self.rect.w * 1.6), int(self.rect.h * 1.0))
+            if self.facing > 0:
+                hb.midleft = (self.rect.right, self.rect.centery)
+            else:
+                hb.midright = (self.rect.left, self.rect.centery)
+        
+        # use class attack damage (melee)
+        dmg = self.attack_damage + self.combat.atk_bonus
+        hitboxes.append(Hitbox(hb, ATTACK_LIFETIME, dmg, self, dir_vec, pogo=(dir_vec==(0,1))))
+    
+    def _spawn_knight_dash_attack_hitbox(self):
+        """
+        Spawn Knight's dash attack (charge skill) hitbox.
+        Called automatically by frame event system on dash attack animation frame 3.
+        """
+        dash_speed = 10
+        hb = pygame.Rect(0, 0, int(self.rect.w*1.2), self.rect.h)
+        if self.facing > 0:
+            hb.midleft = (self.rect.right, self.rect.centery)
+        else:
+            hb.midright = (self.rect.left, self.rect.centery)
+        hitboxes.append(Hitbox(hb, 12, 4, self, dir_vec=(self.facing,0), vx=self.facing*dash_speed))
+        # Give the player a burst of speed
+        self.vx = self.facing * dash_speed
+        self.dashing = 8
+        print(f"[Knight] Dash attack hitbox spawned on frame {self.anim_manager.get_current_frame_index() if self.anim_manager else '?'}")
+    
     def start_attack(self, keys, camera):
         # Wizard: ranged normal attack toward mouse
         if self.cls == 'Wizard':
@@ -709,6 +930,28 @@ class Player:
             hitboxes.append(Hitbox(hb, 90, damage, self, dir_vec=(nx,ny), vx=nx*speed, vy=ny*speed, tag='spell'))
             return
 
+        # Knight: Use frame event system for attack
+        if self.cls == 'Knight':
+            up = keys[pygame.K_w] or keys[pygame.K_UP]
+            down = keys[pygame.K_s] or keys[pygame.K_DOWN]
+            dir_vec = (self.facing, 0)
+            if up: dir_vec = (0, -1)
+            elif down: dir_vec = (0, 1)
+            
+            # Store attack direction for frame event callback to use
+            self._attack_dir_vec = dir_vec
+            
+            attack_speed_mult = getattr(self, 'attack_speed_mult', 1.0)
+            self.attack_cd = ATTACK_COOLDOWN / attack_speed_mult
+            self.combo_t = COMBO_RESET
+            self.combo = (self.combo + 1) % 3
+            
+            # Play attack animation - hitbox will spawn on frame 4 automatically!
+            if self.anim_manager:
+                self.anim_manager.play(AnimationState.ATTACK, force=True)
+            return
+
+        # Ranger and other classes: Keep old immediate spawning behavior
         up = keys[pygame.K_w] or keys[pygame.K_UP]
         down = keys[pygame.K_s] or keys[pygame.K_DOWN]
         dir_vec = (self.facing, 0)
@@ -894,18 +1137,12 @@ class Player:
                 if self.combat.activate_power_buff():
                     self.skill_cd2 = self.skill_cd2_max = int(25 * FPS * skill_cdr)
             elif idx == 3 and self.skill_cd3 == 0:
-                # charge: a short fast moving hitbox that deals 4 dmg
+                # Charge/Dash Attack: Use frame event system for proper animation sync
                 self.skill_cd3 = self.skill_cd3_max = int(6 * FPS * skill_cdr)
-                dash_speed = 10
-                hb = pygame.Rect(0, 0, int(self.rect.w*1.2), self.rect.h)
-                if self.facing > 0:
-                    hb.midleft = (self.rect.right, self.rect.centery)
-                else:
-                    hb.midright = (self.rect.left, self.rect.centery)
-                hitboxes.append(Hitbox(hb, 12, 4, self, dir_vec=(self.facing,0), vx=self.facing*dash_speed))
-                # give the player a burst of speed
-                self.vx = self.facing * dash_speed
-                self.dashing = 8
+                
+                # Play dash attack animation - hitbox will spawn on frame 3 automatically!
+                if self.anim_manager:
+                    self.anim_manager.play(AnimationState.SKILL_1, force=True)
         elif self.cls == 'Ranger':
             # Ranger skills: Triple shot, Sniper, Speed boost
             skill_cdr = getattr(self, 'skill_cooldown_mult', 1.0)
@@ -1252,7 +1489,10 @@ class Player:
 
         # Update animations after all physics is resolved
         if self.anim_manager:
-            self._update_ranger_animations()
+            if self.cls == 'Ranger':
+                self._update_ranger_animations()
+            elif self.cls == 'Knight':
+                self._update_knight_animations()
             self.anim_manager.update()
 
     def move_and_collide(self, level):
@@ -1377,8 +1617,8 @@ class Player:
 
 
     def draw(self, surf, camera):
-        # For Ranger with animation system, use sprite rendering
-        if self.cls == 'Ranger' and self.anim_manager:
+        # For Ranger/Knight with animation system, use sprite rendering
+        if self.anim_manager and self.cls in ('Ranger', 'Knight'):
             # Draw the animated sprite
             sprite_drawn = self.anim_manager.draw(surf, camera, show_invincibility=True)
             

@@ -47,6 +47,7 @@ class AnimationConfig:
     priority: int = 0  # Higher priority animations override lower ones
     on_complete_callback: Optional[Callable] = None  # Called when animation completes
     next_state: Optional[AnimationState] = None  # Auto-transition after completion
+    frame_events: Dict[int, List[Callable]] = field(default_factory=dict)  # Callbacks per frame
     
     def __post_init__(self):
         """Validate configuration"""
@@ -91,6 +92,9 @@ class AnimationManager:
         self.frame_timer: int = 0
         self.requested_state: Optional[AnimationState] = None
         self.is_playing: bool = True
+        
+        # Frame event tracking
+        self._triggered_events: set = set()  # Track which frame events have fired this animation
         
         # Sprite rendering properties
         self.sprite_offset = (0, 0)  # (x, y) offset from entity rect
@@ -196,6 +200,7 @@ class AnimationManager:
         self.frame_timer = 0
         self.requested_state = None
         self.is_playing = True
+        self._triggered_events.clear()  # Reset triggered events for new animation
     
     def update(self):
         """Update animation state. Call this every frame in enemy tick()."""
@@ -213,11 +218,15 @@ class AnimationManager:
             self.frame_timer = 0
             self.current_frame_index += 1
             
+            # Trigger frame events when entering a new frame
+            self._trigger_frame_events()
+            
             # Check if animation completed
             if self.current_frame_index >= len(current_config.frames):
                 if current_config.loop:
                     # Loop back to start
                     self.current_frame_index = 0
+                    self._triggered_events.clear()  # Reset for next loop
                 else:
                     # Animation finished
                     self.current_frame_index = len(current_config.frames) - 1
@@ -236,6 +245,26 @@ class AnimationManager:
                     elif self.requested_state:
                         # Play requested animation if one was queued
                         self.play(self.requested_state)
+    
+    def _trigger_frame_events(self):
+        """Internal method to trigger events for the current frame."""
+        current_config = self.animations.get(self.current_state)
+        if not current_config:
+            return
+        
+        # Check if current frame has events and hasn't been triggered yet
+        event_key = (self.current_state, self.current_frame_index)
+        if event_key in self._triggered_events:
+            return  # Already triggered this frame in this animation playthrough
+        
+        if self.current_frame_index in current_config.frame_events:
+            callbacks = current_config.frame_events[self.current_frame_index]
+            for callback in callbacks:
+                try:
+                    callback()
+                    self._triggered_events.add(event_key)
+                except Exception as e:
+                    print(f"[AnimationSystem] Frame event error on {self.current_state.value} frame {self.current_frame_index}: {e}")
     
     def get_current_frame(self) -> Optional[pygame.Surface]:
         """Get the current animation frame surface."""
@@ -317,6 +346,93 @@ class AnimationManager:
     def set_sprite_offset_y(self, offset_y: int):
         """Set vertical sprite offset (backward compatibility)."""
         self.sprite_offset_y = offset_y
+    
+    def set_frame_event(self, state: AnimationState, frame_index: int, callback: Callable):
+        """
+        Register a callback to be triggered when a specific animation frame is reached.
+        
+        This is useful for:
+        - Spawning attack hitboxes at the right moment in an attack animation
+        - Playing sound effects synchronized with animation (e.g., footstep on frame 3)
+        - Triggering particle effects at specific frames
+        - Item usage effects synchronized with animation
+        
+        Args:
+            state: Animation state to attach event to
+            frame_index: Frame number to trigger on (0-based, matches animation frame index)
+            callback: Function to call when frame is reached (takes no arguments)
+        
+        Example:
+            # Spawn attack hitbox on frame 5 of 12-frame attack animation
+            def spawn_attack():
+                hitbox = Hitbox(self.rect.centerx, self.rect.centery, ...)
+                hitboxes.append(hitbox)
+            
+            self.anim_manager.set_frame_event(AnimationState.ATTACK, 5, spawn_attack)
+        """
+        if state not in self.animations:
+            print(f"[AnimationSystem] Warning: Cannot set frame event for unloaded animation {state.value}")
+            return
+        
+        config = self.animations[state]
+        if frame_index < 0 or frame_index >= len(config.frames):
+            print(f"[AnimationSystem] Warning: Frame index {frame_index} out of range for {state.value} (has {len(config.frames)} frames)")
+            return
+        
+        if frame_index not in config.frame_events:
+            config.frame_events[frame_index] = []
+        
+        config.frame_events[frame_index].append(callback)
+        print(f"[AnimationSystem] Registered frame event for {state.value} frame {frame_index}")
+    
+    def set_attack_frame(self, state: AnimationState, frame_index: int, spawn_hitbox_callback: Callable):
+        """
+        Convenience method to set the attack frame for an animation.
+        This is the frame where the attack hitbox should spawn.
+        
+        Args:
+            state: Attack animation state (typically AnimationState.ATTACK)
+            frame_index: Frame where attack should execute (0-based)
+            spawn_hitbox_callback: Function that creates and spawns the hitbox
+        
+        Example:
+            def spawn_sword_slash():
+                hitbox = Hitbox(
+                    self.rect.centerx + (30 * self.facing),
+                    self.rect.centery,
+                    40, 40,
+                    damage=self.attack_damage,
+                    owner=self,
+                    lifetime=8
+                )
+                hitboxes.append(hitbox)
+            
+            # Spawn hitbox on frame 6 of attack animation
+            self.anim_manager.set_attack_frame(AnimationState.ATTACK, 6, spawn_sword_slash)
+        """
+        self.set_frame_event(state, frame_index, spawn_hitbox_callback)
+    
+    def get_current_frame_index(self) -> int:
+        """
+        Get the current frame index (0-based).
+        Useful for checking which frame of the animation is currently playing.
+        
+        Returns:
+            Current frame index
+        """
+        return self.current_frame_index
+    
+    def is_on_frame(self, frame_index: int) -> bool:
+        """
+        Check if the animation is currently on a specific frame.
+        
+        Args:
+            frame_index: Frame to check (0-based)
+        
+        Returns:
+            True if currently on that frame
+        """
+        return self.current_frame_index == frame_index
 
 
 # ============================================================================

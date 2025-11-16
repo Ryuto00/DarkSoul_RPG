@@ -15,6 +15,8 @@ class PCGRuntimeConfig(NamedTuple):
     use_pcg: bool
     seed_mode: str
     seed: int
+    selected_class: str
+    selected_class: str
 
 
 def load_pcg_config(config_path: str = "config/pcg_config.json") -> PCGConfig:
@@ -56,10 +58,11 @@ def load_pcg_config(config_path: str = "config/pcg_config.json") -> PCGConfig:
 
 
 def load_pcg_runtime_config(config_path: str = "config/pcg_config.json") -> PCGRuntimeConfig:
-    """Load runtime PCG toggles (use_pcg, seed_mode, seed) with safe defaults."""
+    """Load runtime PCG toggles (use_pcg, seed_mode, seed, selected_class) with safe defaults."""
     use_pcg = False
     seed_mode = "fixed"
     seed = 12345
+    selected_class = "Knight"  # default class
 
     if os.path.exists(config_path):
         try:
@@ -75,11 +78,16 @@ def load_pcg_runtime_config(config_path: str = "config/pcg_config.json") -> PCGR
                 seed = int(cfg.get('seed', seed))
             except (TypeError, ValueError):
                 seed = 12345
+            # Load selected class
+            selected_class = str(cfg.get('selected_class', selected_class))
+            # Validate class is one of the allowed options
+            if selected_class not in ("Knight", "Ranger", "Wizard"):
+                selected_class = "Knight"
         except Exception:
             # fall back to defaults on any error
             pass
 
-    return PCGRuntimeConfig(use_pcg=use_pcg, seed_mode=seed_mode, seed=seed)
+    return PCGRuntimeConfig(use_pcg=use_pcg, seed_mode=seed_mode, seed=seed, selected_class=selected_class)
 
 
 def save_pcg_config(config: PCGConfig, config_path: str = "config/pcg_config.json"):
@@ -117,7 +125,7 @@ def save_pcg_config(config: PCGConfig, config_path: str = "config/pcg_config.jso
         except Exception:
             existing = {}
     pcg_cfg = existing.get("pcg_config", {})
-    for key in ("use_pcg", "seed_mode", "seed"):
+    for key in ("use_pcg", "seed_mode", "seed", "selected_class"):
         if key in pcg_cfg:
             data["pcg_config"][key] = pcg_cfg[key]
 
@@ -143,6 +151,7 @@ def save_pcg_runtime_config(runtime: PCGRuntimeConfig, config_path: str = "confi
     pcg_cfg["use_pcg"] = bool(runtime.use_pcg)
     pcg_cfg["seed_mode"] = str(runtime.seed_mode)
     pcg_cfg["seed"] = int(runtime.seed)
+    pcg_cfg["selected_class"] = str(runtime.selected_class)
 
     existing["pcg_config"] = pcg_cfg
 

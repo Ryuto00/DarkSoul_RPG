@@ -86,8 +86,9 @@ class Game:
         # Initialize menu system
         self.menu = Menu(self)
 
-        # Title flow first
-        self.selected_class = 'Knight'  # default if player skips class select
+        # Load selected class from config
+        runtime = load_pcg_runtime_config()
+        self.selected_class = runtime.selected_class
 
         # Developer cheat toggles
         self.cheat_infinite_mana = False
@@ -300,7 +301,8 @@ class Game:
         runtime = PCGRuntimeConfig(
             use_pcg=enable,
             seed_mode="fixed",
-            seed=self.pcg_seed
+            seed=self.pcg_seed,
+            selected_class=self.selected_class
         )
         save_pcg_runtime_config(runtime)
         

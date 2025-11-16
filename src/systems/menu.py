@@ -37,13 +37,18 @@ class Menu:
                     elif ev.key in (pygame.K_DOWN, pygame.K_s):
                         idx = (idx + 1) % len(options)
                     elif ev.key in (pygame.K_RETURN, pygame.K_KP_ENTER, pygame.K_SPACE):
-                        return options[idx]
+                        chosen_class = options[idx]
+                        self._save_selected_class(chosen_class)
+                        return chosen_class
                     # Direct hotkeys
                     elif ev.key == pygame.K_1:
+                        self._save_selected_class(options[0])
                         return options[0]
                     elif ev.key == pygame.K_2:
+                        self._save_selected_class(options[1])
                         return options[1]
                     elif ev.key == pygame.K_3:
+                        self._save_selected_class(options[2])
                         return options[2]
 
             # draw
@@ -57,6 +62,16 @@ class Menu:
                 draw_text(self.screen, f"{i+1}. {opt}", (WIDTH//2 - 80, y), col, size=28)
             draw_text(self.screen, "Use Up/Down or 1-3, Enter to confirm", (WIDTH//2 - 160, HEIGHT-64), (160,160,180), size=16)
             pygame.display.flip()
+    
+    def _save_selected_class(self, class_name: str):
+        """Save the selected class to config file."""
+        try:
+            from src.level.config_loader import load_pcg_runtime_config, save_pcg_runtime_config
+            runtime = load_pcg_runtime_config()
+            updated_runtime = runtime._replace(selected_class=class_name)
+            save_pcg_runtime_config(updated_runtime)
+        except Exception:
+            pass  # Fail silently if config save fails
 
     def how_to_play_screen(self):
         """Blocking help/instructions screen. Return to caller on Esc/Enter."""
@@ -204,8 +219,20 @@ class Menu:
             from src.level.config_loader import load_pcg_runtime_config
             runtime = load_pcg_runtime_config()
             mode = "PCG" if runtime.use_pcg else "Legacy"
-            summary = f"Class: {self.game.selected_class} | Mode: {mode} | Seed: {runtime.seed}"
-            draw_centered_text(self.screen, summary, (WIDTH // 2, bottom_summary_y), (180,200,220), size=18)
+            
+            # Display selected class prominently at the bottom with class-specific colors
+            class_colors = {
+                "Knight": (220, 72, 72),    # Red
+                "Ranger": (80, 200, 120),   # Green
+                "Wizard": (80, 150, 220)    # Blue
+            }
+            class_color = class_colors.get(self.game.selected_class, (255,220,140))
+            class_text = f"Selected Class: {self.game.selected_class}"
+            draw_centered_text(self.screen, class_text, (WIDTH // 2, bottom_summary_y - 28), class_color, size=22, bold=True)
+            
+            # Display mode and seed info below class
+            summary = f"Mode: {mode} | Seed: {runtime.seed}"
+            draw_centered_text(self.screen, summary, (WIDTH // 2, bottom_summary_y), (180,200,220), size=16)
 
             # bottom helper text
             draw_centered_text(self.screen,
