@@ -1079,9 +1079,12 @@ def add_enemy_spawn_areas(
                     else:
                         aet = ['Bug','Frog','Archer','Assassin','Bee','WizardCaster','KnightMonster','Golem']
 
+                # Use square root scaling for caps/weights to prevent huge clusters in large rooms
+                area = rw * rh
+                import math
                 props = {
-                    'spawn_cap': max(1, (rw * rh) // 2),
-                    'spawn_weight': max(1, 2 * rw * rh),
+                    'spawn_cap': max(1, min(5, int(math.sqrt(area)))),  # Cap at 5 enemies per region
+                    'spawn_weight': max(1, min(50, area)),  # Cap weight at 50
                     'allowed_enemy_types': aet,
                     'spawn_surface': 'both',
                 }
@@ -1210,9 +1213,12 @@ def add_enemy_spawn_areas(
                 else:
                     aet = ['Bug','Frog','Archer','Assassin','Bee','WizardCaster','KnightMonster','Golem']
 
+            # Use square root scaling for caps/weights to prevent clustering
+            area = rw * rh
+            import math
             props = {
-                'spawn_cap': max(1, (rw * rh) // 1),
-                'spawn_weight': max(1, 2 * rw * rh),
+                'spawn_cap': max(1, min(4, int(math.sqrt(area)))),  # Cap at 4 enemies per region
+                'spawn_weight': max(1, min(40, area)),  # Cap weight at 40
                 'allowed_enemy_types': aet,
                 'spawn_surface': surface,
             }

@@ -1345,8 +1345,8 @@ def generate_simple_pcg_level_set(
                     add_floating_platforms(room, profile=profile, config=config, rng=rng)
                     try:
                         from src.level.pcg_postprocess import add_enemy_spawn_areas
-                        # conservative defaults: 1-3 spawn regions per room
-                        add_enemy_spawn_areas(room, config=config, rng=rng, min_regions=1, max_regions=3)
+                        # More spawn regions to spread enemies out: 3-6 regions per room
+                        add_enemy_spawn_areas(room, config=config, rng=rng, min_regions=3, max_regions=6)
                     except Exception:
                         pass
                 except Exception:

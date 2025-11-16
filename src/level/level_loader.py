@@ -294,13 +294,14 @@ class LevelLoader:
                 cnt = 1
             center = (cx_sum / cnt, cy_sum / cnt)
 
-            # assign per-tile weight inversely proportional to squared distance from center
+            # assign per-tile weight with mild bias toward center (not squared distance)
+            # Use linear distance instead of squared to reduce clustering
             for (tx, ty) in rect_tiles:
                 dx = (tx + 0.5) - center[0]
                 dy = (ty + 0.5) - center[1]
-                dist2 = dx * dx + dy * dy
-                # small constant to avoid division by zero and to keep edge tiles viable
-                tile_weight = rwgt / (1.0 + dist2)
+                dist = (dx * dx + dy * dy) ** 0.5  # Linear distance, not squared
+                # Reduce center bias: use larger constant and smaller divisor
+                tile_weight = rwgt / (5.0 + dist * 0.5)  # Much less biased toward center
                 tile_candidates.append(((tx, ty), float(tile_weight), r))
 
         if not tile_candidates:
