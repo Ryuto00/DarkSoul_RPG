@@ -67,16 +67,16 @@ class Shop:
         self.consumable_scroll_offset = 0
         self.max_visible_gear = 5  # Maximum gear items visible at once
         self.max_visible_consumables = 3  # Maximum consumable items visible at once
+        self.player_info_scroll_offset = 0  # Scroll offset for player stats
         
         # UI regions for interaction
         self.regions = []
         self.hover_item = None
         self.hover_button = None
         
-        # Inventory swap popup state
-        self.swap_popup_open = False
-        self.swap_popup_type = None  # 'gear' or 'consumable'
-        self.swap_popup_slot_index = None  # Which player slot was clicked
+        # Buy button feedback
+        self.buy_button_clicked = False
+        self.buy_button_click_time = 0
         
         # Create initial inventory
         self.refresh_inventory()
@@ -328,17 +328,16 @@ class Shop:
     
     def handle_event(self, event):
         """Handle shop events properly using event-based input"""
-        # If swap popup is open, handle it first
-        if self.swap_popup_open:
-            if event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
-                self._close_swap_popup()
-                return
-        
         if event.type == pygame.MOUSEWHEEL:
-            if event.y > 0:
-                self._scroll_up()
-            elif event.y < 0:
-                self._scroll_down()
+            # Detect which column the mouse is over for targeted scrolling
+            mouse_pos = pygame.mouse.get_pos()
+            scrolled = self._handle_mousewheel_scroll(mouse_pos, event.y)
+            if not scrolled:
+                # Fallback to default scroll behavior
+                if event.y > 0:
+                    self._scroll_up()
+                elif event.y < 0:
+                    self._scroll_down()
         elif event.type == pygame.KEYDOWN:
             # Navigation - LEFT/RIGHT switch between categories (spatial navigation)
             if event.key in [pygame.K_LEFT, pygame.K_a]:
@@ -641,7 +640,7 @@ class Shop:
         content_y = panel_y + header_height + 20
         content_height = panel_height - header_height - 80  # Leave space for footer
         
-        # Left column: Shop items list (40% width)
+        # Left column: Shop items list (40% width) - FULL HEIGHT NOW
         left_width = int(panel_width * 0.40)
         left_rect = pygame.Rect(panel_x + 10, content_y, left_width, content_height)
         
@@ -658,12 +657,20 @@ class Shop:
         self._draw_player_slots_column(screen, middle_rect)
         self._draw_player_info_column(screen, right_rect)
         
-        # Exit button at bottom center
+        # Footer area - Coin box and Exit button
+        # Exit button back in center
         exit_button_width = 120
         exit_button_height = 36
         exit_button_x = panel_x + (panel_width - exit_button_width) // 2
         exit_button_y = panel_y + panel_height - 50
         exit_button_rect = pygame.Rect(exit_button_x, exit_button_y, exit_button_width, exit_button_height)
+        
+        # Coin box on the left side of footer - SMALLER and LOWER
+        coin_box_width = 140  # Reduced from 250
+        coin_box_height = 44
+        coin_box_x = panel_x + 20
+        coin_box_y = panel_y + panel_height - 54  # Lower to avoid overlap
+        coin_box_rect = pygame.Rect(coin_box_x, coin_box_y, coin_box_width, coin_box_height)
         
         mouse_pos = pygame.mouse.get_pos()
         is_exit_hovering = exit_button_rect.collidepoint(mouse_pos)
@@ -676,12 +683,11 @@ class Shop:
         exit_text_rect = exit_text.get_rect(center=exit_button_rect.center)
         screen.blit(exit_text, exit_text_rect)
         
+        # Draw coin box in footer
+        self._draw_coin_display_box(screen, coin_box_rect)
+        
         # Register exit button region
         self.regions.append({'rect': exit_button_rect, 'action': 'exit'})
-        
-        # Draw swap popup on top if open
-        if self.swap_popup_open:
-            self._draw_swap_popup(screen)
 
         # Note: tooltip is drawn later by the main draw routine to ensure it
         # appears above all shop UI layers. Call `shop.draw_tooltip_overlay(screen)`
@@ -725,12 +731,26 @@ class Shop:
         # compute buy button Y first then derive grid height so they never overlap
         buy_y = rect.y + rect.height - buy_button_height - bottom_padding
         grid_height = max(0, buy_y - grid_y - 8)
-        grid_rect = pygame.Rect(rect.x + 12, grid_y, rect.width - 24, grid_height)
+        # Add a bit more left padding to avoid clipping against the panel edge
+        # (previously this could cause the leftmost content to be partially
+        # obscured by the outer panel border). 16 px provides a consistent
+        # inner margin that matches other column spacing.
+        grid_rect = pygame.Rect(rect.x + 16, grid_y, rect.width - 32, grid_height)
 
-        # List layout (single column list)
+        # List layout (single column list with category headers)
         item_h = 64
         item_spacing = 8
-        total_content_height = len(all_items) * (item_h + item_spacing)
+        category_header_h = 28
+        
+        # Calculate total content height including category headers
+        # One header for gear, one for consumables (if both exist)
+        num_headers = 0
+        if len(self.selected_gear) > 0:
+            num_headers += 1
+        if len(self.selected_consumables) > 0:
+            num_headers += 1
+        
+        total_content_height = len(all_items) * (item_h + item_spacing) + num_headers * (category_header_h + item_spacing)
 
         # Scrolling: reuse gear_scroll_offset as pixel offset
         scroll_offset = getattr(self, 'gear_scroll_offset', 0)
@@ -745,16 +765,56 @@ class Shop:
         mouse_pos = pygame.mouse.get_pos()
         name_font = get_font(14, bold=True)
         small_font = get_font(10, bold=True)
+        header_font = get_font(13, bold=True)
 
-        # Draw items
+        # Set clipping rect to prevent items from drawing over header and buy button
+        # This ensures scrolled content is clipped to the visible grid area
+        old_clip = screen.get_clip()
+        screen.set_clip(grid_rect)
+
+        # Draw items with category headers
         y_start = grid_rect.y - scroll_offset
+        current_y = y_start
+        
+        # Track which category we're in
+        last_category = None
+        
         for idx, (item_type, item) in enumerate(all_items):
-            y = y_start + idx * (item_h + item_spacing)
+            # Draw category header when category changes
+            if item_type != last_category:
+                header_rect = pygame.Rect(grid_rect.x, current_y, grid_rect.width, category_header_h)
+                
+                # Check if header is visible
+                if not (header_rect.bottom < grid_rect.y or header_rect.top > grid_rect.bottom):
+                    # Header background
+                    pygame.draw.rect(screen, (50, 45, 60), header_rect, border_radius=6)
+                    pygame.draw.rect(screen, (120, 100, 80), header_rect, width=2, border_radius=6)
+                    
+                    # Header text
+                    header_text = "GEAR" if item_type == 'gear' else "CONSUMABLES"
+                    header_color = (220, 180, 100) if item_type == 'gear' else (100, 200, 150)
+                    header_surf = header_font.render(header_text, True, header_color)
+                    screen.blit(header_surf, (header_rect.x + 10, header_rect.y + 7))
+                    
+                    # Item count
+                    count = len(self.selected_gear) if item_type == 'gear' else len(self.selected_consumables)
+                    count_surf = small_font.render(f"({count})", True, (180, 180, 200))
+                    screen.blit(count_surf, (header_rect.right - 35, header_rect.y + 9))
+                
+                current_y += category_header_h + item_spacing
+                last_category = item_type
+            
+            # Position item after any headers
+            y = current_y
             item_rect = pygame.Rect(grid_rect.x, y, grid_rect.width, item_h)
+            current_y += item_h + item_spacing
 
-            # only draw visible
-            if item_rect.bottom < grid_rect.y or item_rect.top > grid_rect.bottom:
-                # still register hitboxes outside visible area? skip
+            # Check if item is visible for drawing, but always register regions
+            is_visible = not (item_rect.bottom < grid_rect.y or item_rect.top > grid_rect.bottom)
+            
+            if not is_visible:
+                # Still register clickable region for items outside visible area
+                self.regions.append({'rect': item_rect, 'item': item})
                 continue
 
             # Determine if this is the currently selected item
@@ -794,10 +854,10 @@ class Shop:
                     letter_surf = get_font(18, bold=True).render(item.icon_letter, True, (20,20,28))
                     screen.blit(letter_surf, letter_surf.get_rect(center=icon_area.center))
 
-            # Name + small details
+            # Name - centered vertically in the item box
             text_x = icon_area.right + 10
-            text_y = item_rect.y + 10
             name_surf = name_font.render(item.name, True, (230, 230, 245))
+            text_y = item_rect.centery - name_surf.get_height() // 2
             screen.blit(name_surf, (text_x, text_y))
 
             # Price box on the right
@@ -812,16 +872,36 @@ class Shop:
             price_text = small_font.render(f"{price}c", True, (255,255,255))
             screen.blit(price_text, price_text.get_rect(center=price_rect.center))
 
-            # Stock count for consumables (small badge)
+            # Stock count for consumables (in a mini box)
             if item_type == 'consumable':
                 stock = self.consumable_stock.get(item.key, 0)
                 if stock > 0:
-                    stock_surf = small_font.render(f"x{stock}", True, (255,255,255))
-                    screen.blit(stock_surf, (price_rect.left - 28, price_rect.top + 4))
+                    # Create mini box for stock count
+                    stock_font = get_font(13, bold=True)  # Larger font
+                    stock_surf = stock_font.render(f"x{stock}", True, (255, 255, 255))
+                    
+                    # Mini box dimensions
+                    stock_box_w = 36
+                    stock_box_h = 24
+                    stock_box_x = price_rect.left - stock_box_w - 8
+                    stock_box_y = item_rect.centery - stock_box_h // 2  # Vertically centered
+                    stock_box_rect = pygame.Rect(stock_box_x, stock_box_y, stock_box_w, stock_box_h)
+                    
+                    # Draw mini box
+                    pygame.draw.rect(screen, (60, 55, 70), stock_box_rect, border_radius=4)
+                    pygame.draw.rect(screen, (120, 180, 140), stock_box_rect, width=1, border_radius=4)
+                    
+                    # Draw text centered in the box
+                    stock_text_rect = stock_surf.get_rect(center=stock_box_rect.center)
+                    screen.blit(stock_surf, stock_text_rect)
 
-            # Register clickable region for selecting item (not immediate buy)
+            # Register clickable region for selecting item (not immediate buy) - only for visible items
             # We store the item and its index so selection logic can find it
-            self.regions.append({'rect': item_rect, 'item': item})
+            if is_visible:
+                self.regions.append({'rect': item_rect, 'item': item})
+
+        # Restore previous clipping state before drawing scrollbar and buy button
+        screen.set_clip(old_clip)
 
         # If content taller than viewport, draw simple scrollbar on right side of column
         if total_content_height > grid_rect.height:
@@ -836,7 +916,9 @@ class Shop:
             pygame.draw.rect(screen, (150,150,170), (scrollbar_x+2, thumb_y, 4, thumb_h), border_radius=3)
 
         # Draw Buy button at bottom of column that applies to the selected item
-        buy_x = rect.x + 12
+        # Match buy button left offset to the list padding so it lines up
+        # visually with the items above it.
+        buy_x = rect.x + 16
         buy_w = rect.width - 24
         buy_rect = pygame.Rect(buy_x, buy_y, buy_w, buy_button_height)
 
@@ -847,28 +929,90 @@ class Shop:
         elif self.selection_category == 'consumable' and 0 <= self.selection < len(self.selected_consumables):
             selected_item = self.selected_consumables[self.selection]
 
-        # Button appearance
+        # Button appearance with hover detection
+        mouse_pos = pygame.mouse.get_pos()
+        is_hovering = buy_rect.collidepoint(mouse_pos)
+        
+        # Check click feedback timing
+        current_time = pygame.time.get_ticks()
+        is_click_feedback_active = (current_time - self.buy_button_click_time) < 150  # 150ms feedback
+        
         if selected_item is None:
-            btn_col = (80,80,90)
+            btn_col = (80, 80, 90)
             label = "Buy (no item)"
         else:
             price = self._get_item_price(selected_item)
             affordable = self.game.player.money >= price
+            has_stock = True
+            
+            # Check stock for consumables
             if hasattr(selected_item, 'use') and self.consumable_stock.get(selected_item.key, 0) <= 0:
                 affordable = False
+                has_stock = False
+            
+            # Check if already purchased for gear
             if hasattr(selected_item, 'modifiers') and (selected_item.key in self.purchased_equipment or (hasattr(self.game, 'inventory') and selected_item.key in self.game.inventory.armament_order)):
                 affordable = False
-            btn_col = (0,150,0) if affordable else (90,60,60)
-            # Button label like "x1: 20c"
+            
+            # Button color logic:
+            # - Click feedback (white flash): When just clicked
+            # - Green: Hovering + can afford + has stock
+            # - Yellow: Can afford + has stock (not hovering)
+            # - Red: Cannot afford or no stock
+            if is_click_feedback_active:
+                btn_col = (200, 200, 200)  # White flash on click
+            elif not affordable or not has_stock:
+                btn_col = (120, 50, 50)  # Red (can't buy)
+            elif is_hovering:
+                btn_col = (50, 180, 80)  # Bright green (hovering + can buy)
+            else:
+                btn_col = (180, 160, 40)  # Yellow (can buy, not hovering)
+            
+            # Button label like "Buy x1: 20c"
             label = f"Buy x1: {price}c"
 
         pygame.draw.rect(screen, btn_col, buy_rect, border_radius=6)
-        pygame.draw.rect(screen, (200,170,150), buy_rect, width=1, border_radius=6)
-        lbl = get_font(14, bold=True).render(label, True, (255,255,255))
+        pygame.draw.rect(screen, (200, 170, 150), buy_rect, width=2 if is_hovering else 1, border_radius=6)
+        lbl = get_font(14, bold=True).render(label, True, (255, 255, 255))
         screen.blit(lbl, lbl.get_rect(center=buy_rect.center))
 
         # Register buy button region
         self.regions.append({'rect': buy_rect, 'action': 'buy_selected'})
+    
+    def _draw_coin_display_box(self, screen, rect):
+        """Draw compact coin/money display box in footer"""
+        # Box background
+        pygame.draw.rect(screen, (25, 25, 35), rect, border_radius=8)
+        pygame.draw.rect(screen, (100, 100, 120), rect, width=2, border_radius=8)
+        
+        # Inner decorative border with gold accent
+        inner_rect = rect.inflate(-6, -6)
+        pygame.draw.rect(screen, (60, 50, 30), inner_rect, border_radius=6)
+        pygame.draw.rect(screen, (255, 215, 0), inner_rect, width=2, border_radius=6)
+        
+        # Coin icon/symbol on the left
+        coin_size = 28  # Slightly smaller
+        coin_x = rect.x + 12
+        coin_y = rect.centery - coin_size // 2
+        coin_rect = pygame.Rect(coin_x, coin_y, coin_size, coin_size)
+        
+        # Draw coin (golden circle)
+        pygame.draw.circle(screen, (255, 215, 0), coin_rect.center, coin_size // 2)
+        pygame.draw.circle(screen, (218, 165, 32), coin_rect.center, coin_size // 2, width=2)
+        pygame.draw.circle(screen, (255, 235, 100), coin_rect.center, coin_size // 2 - 3, width=1)
+        
+        # Coin symbol/letter
+        coin_font = get_font(16, bold=True)
+        coin_symbol = coin_font.render("C", True, (139, 90, 0))
+        coin_symbol_rect = coin_symbol.get_rect(center=coin_rect.center)
+        screen.blit(coin_symbol, coin_symbol_rect)
+        
+        # Coin amount (large and prominent) - NO LABEL, just the number
+        amount_font = get_font(22, bold=True)
+        amount_text = amount_font.render(str(self.game.player.money), True, (255, 215, 0))
+        amount_x = coin_rect.right + 12
+        amount_y = rect.centery - amount_text.get_height() // 2
+        screen.blit(amount_text, (amount_x, amount_y))
     
     def _draw_player_slots_column(self, screen, rect):
         """Draw middle column with player equipment and consumable slots (two-row horizontal layout)
@@ -954,8 +1098,7 @@ class Shop:
                 num_text = num_font.render(str(i + 1), True, (100, 100, 120))
                 screen.blit(num_text, num_text.get_rect(center=slot_rect.center))
 
-            # Register clickable region
-            self.regions.append({'rect': slot_rect, 'action': 'swap_gear_slot', 'slot_index': i})
+            # Clickable region removed - no swap popup functionality
 
         # Consumables header (placed under armament row)
         cons_header_rect = pygame.Rect(rect.x + 4, arm_row_y + slot_size + 12, rect.width - 8, header_height)
@@ -1023,8 +1166,7 @@ class Shop:
                 hotkey_text = hotkey_font.render(hotkey, True, (100, 100, 120))
                 screen.blit(hotkey_text, hotkey_text.get_rect(center=slot_rect.center))
 
-            # Register clickable region
-            self.regions.append({'rect': slot_rect, 'action': 'swap_consumable_slot', 'slot_index': i})
+            # Clickable region removed - no swap popup functionality
     
     def _draw_player_info_column(self, screen, rect):
         """Draw right column with player status (like inventory)"""
@@ -1032,25 +1174,39 @@ class Shop:
         pygame.draw.rect(screen, (25, 25, 35), rect, border_radius=10)
         pygame.draw.rect(screen, (100, 100, 120), rect, width=2, border_radius=10)
         
-        # Player model frame
-        model_height = 200
+        # Player model frame - REDUCED HEIGHT
+        model_height = 120  # Reduced from 200 to 120
         model_rect = pygame.Rect(rect.x + 10, rect.y + 10, rect.width - 20, model_height)
         pygame.draw.rect(screen, (32, 36, 52), model_rect, border_radius=12)
         pygame.draw.rect(screen, (160, 180, 220), model_rect, width=1, border_radius=12)
         
-        # Player class display
-        player_frame = pygame.Rect(0, 0, self.game.player.rect.width * 3, self.game.player.rect.height * 3)
-        player_frame.center = model_rect.center
+        # Player class display (smaller)
+        player_frame = pygame.Rect(0, 0, self.game.player.rect.width * 2, self.game.player.rect.height * 2)
+        player_frame.center = (model_rect.centerx, model_rect.centery - 10)
         pygame.draw.rect(screen, (120, 200, 235), player_frame, border_radius=8)
         
-        class_font = get_font(20, bold=True)
+        class_font = get_font(16, bold=True)  # Reduced from 20 to 16
         class_text = class_font.render(self.game.player.cls, True, (240, 230, 250))
-        screen.blit(class_text, class_text.get_rect(center=(model_rect.centerx, model_rect.bottom - 20)))
+        screen.blit(class_text, class_text.get_rect(center=(model_rect.centerx, model_rect.bottom - 15)))
         
-        # Stats section
-        stats_y = model_rect.bottom + 20
-        stats_font = get_font(16)
-        line_height = 24
+        # Stats section with header and scrollable area
+        stats_header_y = model_rect.bottom + 10
+        stats_header_height = 30
+        stats_header_rect = pygame.Rect(rect.x + 4, stats_header_y, rect.width - 8, stats_header_height)
+        pygame.draw.rect(screen, (45, 40, 55), stats_header_rect, border_radius=6)
+        pygame.draw.rect(screen, (160, 140, 100), stats_header_rect, width=2, border_radius=6)
+        
+        header_font = get_font(14, bold=True)
+        header_text = header_font.render("Player Stats", True, (255, 235, 180))
+        screen.blit(header_text, (stats_header_rect.x + 10, stats_header_rect.y + 8))
+        
+        # Scrollable stats area
+        stats_area_y = stats_header_rect.bottom + 8
+        stats_area_height = rect.bottom - stats_area_y - 10
+        stats_area_rect = pygame.Rect(rect.x + 10, stats_area_y, rect.width - 20, stats_area_height)
+        
+        stats_font = get_font(14)  # Reduced from 16 to 14
+        line_height = 22  # Reduced from 24 to 22
         
         stats_lines = [
             (f"HP: {self.game.player.hp}/{self.game.player.max_hp}", (255, 150, 150)),
@@ -1064,11 +1220,47 @@ class Shop:
             stats_lines.append((f"Stamina: {self.game.player.stamina:.0f}/{self.game.player.max_stamina:.0f}", (150, 255, 150)))
         
         stats_lines.append((f"Speed: {self.game.player.player_speed:.1f}", (200, 200, 255)))
-        stats_lines.append((f"Coins: {self.game.player.money}", (255, 215, 0)))
+        # Coins removed - now displayed in dedicated coin box under shop items
         
+        # Calculate total content height
+        total_stats_height = len(stats_lines) * line_height
+        
+        # Clamp scroll offset
+        max_scroll = max(0, total_stats_height - stats_area_height)
+        if total_stats_height <= stats_area_height:
+            self.player_info_scroll_offset = 0
+        else:
+            self.player_info_scroll_offset = max(0, min(self.player_info_scroll_offset, max_scroll))
+        
+        # Set clipping for stats area
+        old_clip = screen.get_clip()
+        screen.set_clip(stats_area_rect)
+        
+        # Draw stats with scroll offset
         for i, (text, color) in enumerate(stats_lines):
-            stat_text = stats_font.render(text, True, color)
-            screen.blit(stat_text, (rect.x + 15, stats_y + i * line_height))
+            stat_y = stats_area_rect.y + (i * line_height) - self.player_info_scroll_offset
+            # Only draw if visible in the clipped area
+            if stat_y + line_height >= stats_area_rect.y and stat_y <= stats_area_rect.bottom:
+                stat_text = stats_font.render(text, True, color)
+                screen.blit(stat_text, (stats_area_rect.x + 5, stat_y))
+        
+        # Restore clip
+        screen.set_clip(old_clip)
+        
+        # Draw scrollbar if needed
+        if total_stats_height > stats_area_height:
+            scrollbar_x = rect.right - 10
+            scrollbar_y = stats_area_rect.y
+            scrollbar_h = stats_area_rect.height
+            
+            # Track
+            pygame.draw.rect(screen, (60, 60, 80), (scrollbar_x, scrollbar_y, 6, scrollbar_h), border_radius=3)
+            
+            # Thumb
+            scroll_ratio = self.player_info_scroll_offset / max(1, max_scroll)
+            thumb_h = max(20, int((stats_area_height / total_stats_height) * scrollbar_h))
+            thumb_y = scrollbar_y + int(scroll_ratio * (scrollbar_h - thumb_h))
+            pygame.draw.rect(screen, (150, 150, 170), (scrollbar_x + 1, thumb_y, 4, thumb_h), border_radius=2)
     
     def _draw_shop_gear_cell(self, screen, rect):
         """Draw shop gear items cell with a list view"""
@@ -1209,7 +1401,7 @@ class Shop:
         screen.blit(money_text, (rect.x + 10, stats_y))
     
     def _draw_player_gear_slots_cell(self, screen, rect):
-        """Draw player gear slots cell with click-to-swap functionality"""
+        """Draw player gear slots cell (display only)"""
         # Cell background
         pygame.draw.rect(screen, (25, 25, 35), rect, border_radius=10)
         pygame.draw.rect(screen, (100, 100, 120), rect, width=2, border_radius=10)
@@ -1267,11 +1459,10 @@ class Shop:
             slot_text = get_font(12).render(str(i + 1), True, (120, 120, 140))
             screen.blit(slot_text, (item_rect.x + 3, item_rect.y + 3))
             
-            # Register clickable region
-            self.regions.append({'rect': item_rect, 'action': 'swap_gear_slot', 'slot_index': i})
+            # Clickable region removed - no swap popup functionality
     
     def _draw_player_consumable_slots_cell(self, screen, rect):
-        """Draw player consumable slots cell with click-to-swap functionality"""
+        """Draw player consumable slots cell (display only)"""
         # Cell background
         pygame.draw.rect(screen, (25, 25, 35), rect, border_radius=10)
         pygame.draw.rect(screen, (100, 100, 120), rect, width=2, border_radius=10)
@@ -1338,7 +1529,7 @@ class Shop:
             screen.blit(hotkey_text, (item_rect.x + 3, item_rect.y + 3))
             
             # Register clickable region
-            self.regions.append({'rect': item_rect, 'action': 'swap_consumable_slot', 'slot_index': i})
+            # Clickable region removed - no swap popup functionality
     
     def _draw_dynamic_inventory_panel(self, screen, rect):
         """Draw dynamic inventory panel that changes based on selection"""
@@ -1800,6 +1991,54 @@ class Shop:
             pygame.draw.rect(screen, (120, 120, 140), indicator_rect, border_radius=3)
             pygame.draw.rect(screen, (180, 180, 200), indicator_rect, width=1, border_radius=3)
     
+    def _handle_mousewheel_scroll(self, mouse_pos, scroll_direction):
+        """Handle mouse wheel scrolling based on which column the mouse is over.
+        
+        Returns True if scroll was handled by a specific column, False otherwise.
+        """
+        # Calculate column bounds (same as in draw method)
+        margin = 40
+        panel_width = WIDTH - (margin * 2)
+        panel_x = margin
+        panel_y = margin
+        
+        column_margin = 12
+        header_height = 60
+        content_y = panel_y + header_height + 20
+        
+        # Left column: Shop items list (40% width)
+        left_width = int(panel_width * 0.40)
+        left_rect = pygame.Rect(panel_x + 10, content_y, left_width, 100)  # Height doesn't matter for hover check
+        
+        # Middle column: Player slots (30% width)
+        middle_width = int(panel_width * 0.28)
+        middle_rect = pygame.Rect(left_rect.right + column_margin, content_y, middle_width, 100)
+        
+        # Right column: Player info (30% width)
+        right_width = panel_width - left_width - middle_width - column_margin * 3 - 20
+        right_rect = pygame.Rect(middle_rect.right + column_margin, content_y, right_width, 100)
+        
+        # Check if mouse is in right column (player info) and scroll that
+        if right_rect.left <= mouse_pos[0] <= right_rect.right:
+            if scroll_direction > 0:
+                # Scroll up
+                self.player_info_scroll_offset -= 22  # One line height
+                self.player_info_scroll_offset = max(0, self.player_info_scroll_offset)
+            else:
+                # Scroll down
+                self.player_info_scroll_offset += 22  # One line height
+            return True
+        
+        # Check if mouse is in left column (shop items) and scroll that
+        if left_rect.left <= mouse_pos[0] <= left_rect.right:
+            if scroll_direction > 0:
+                self._scroll_up()
+            else:
+                self._scroll_down()
+            return True
+        
+        return False
+    
     def _scroll_up(self):
         """Scroll up in shop list"""
         if self.gear_scroll_offset > 0:
@@ -1831,62 +2070,6 @@ class Shop:
         else:  # consumable
             self.consumable_scroll_offset = max(0, len(self.selected_consumables) - self.max_visible_consumables)
             self.selection = len(self.selected_consumables) - 1
-    
-    def _open_swap_popup(self, popup_type, slot_index):
-        """Open the inventory swap popup"""
-        self.swap_popup_open = True
-        self.swap_popup_type = popup_type
-        self.swap_popup_slot_index = slot_index
-    
-    def _close_swap_popup(self):
-        """Close the inventory swap popup"""
-        self.swap_popup_open = False
-        self.swap_popup_type = None
-        self.swap_popup_slot_index = None
-    
-    def _handle_swap_popup_click(self, pos):
-        """Handle clicks within the swap popup"""
-        if not hasattr(self.game, 'inventory'):
-            return
-        
-        inventory = self.game.inventory
-        
-        # Check for close button click (will be added in draw method)
-        # For now, click outside popup closes it
-        popup_rect = self._get_swap_popup_rect()
-        if not popup_rect.collidepoint(pos):
-            self._close_swap_popup()
-            return
-        
-        # Handle item selection in popup
-        for info in self.regions:
-            if info['rect'].collidepoint(pos):
-                action = info.get('action')
-                if action == 'close_swap_popup':
-                    self._close_swap_popup()
-                elif action == 'swap_select_item':
-                    item_key = info.get('item_key')
-                    if item_key and self.swap_popup_slot_index is not None:
-                        # Swap the item
-                        if self.swap_popup_type == 'gear':
-                            inventory._equip_armament(self.swap_popup_slot_index, item_key)
-                        elif self.swap_popup_type == 'consumable':
-                            inventory._equip_consumable(self.swap_popup_slot_index, item_key)
-                        self._close_swap_popup()
-                break
-    
-    def _get_swap_popup_rect(self):
-        """Get the rectangle for the swap popup"""
-        popup_width = 400
-        popup_height = 500
-        popup_x = (WIDTH - popup_width) // 2
-        popup_y = (HEIGHT - popup_height) // 2
-        return pygame.Rect(popup_x, popup_y, popup_width, popup_height)
-    
-    def _draw_swap_popup(self, screen):
-        """Draw the inventory swap popup"""
-        if not self.swap_popup_open or not hasattr(self.game, 'inventory'):
-            return
 
     def draw_tooltip_overlay(self, screen):
         """Draw any shop tooltip overlay last so it appears above all UI."""
@@ -1902,126 +2085,10 @@ class Shop:
         except Exception:
             pass
         self._draw_shop_tooltip(screen, hover_item, mouse_pos)
-        
-        inventory = self.game.inventory
-        popup_rect = self._get_swap_popup_rect()
-        
-        # Darken background more
-        overlay = pygame.Surface((WIDTH, HEIGHT), pygame.SRCALPHA)
-        overlay.fill((0, 0, 0, 100))
-        screen.blit(overlay, (0, 0))
-        
-        # Popup background
-        pygame.draw.rect(screen, (35, 32, 45), popup_rect, border_radius=12)
-        pygame.draw.rect(screen, (180, 160, 140), popup_rect, width=3, border_radius=12)
-        
-        # Title
-        title_font = get_font(20, bold=True)
-        slot_num = (self.swap_popup_slot_index or 0) + 1
-        if self.swap_popup_type == 'gear':
-            title = f"Select Gear for Slot {slot_num}"
-            items_to_show = [(key, inventory.armament_catalog.get(key)) 
-                           for key in inventory.armament_order]
-        else:
-            title = f"Select Consumable for Slot {slot_num}"
-            # Only show consumables with available stock
-            items_to_show = [(key, inventory.consumable_catalog.get(key)) 
-                           for key in inventory.consumable_order 
-                           if inventory._storage_count(key) > 0]
-        
-        title_text = title_font.render(title, True, (240, 220, 190))
-        screen.blit(title_text, (popup_rect.x + 20, popup_rect.y + 15))
-        
-        # Close button
-        close_btn_size = 30
-        close_btn_rect = pygame.Rect(popup_rect.right - close_btn_size - 10, 
-                                      popup_rect.y + 10, close_btn_size, close_btn_size)
-        pygame.draw.rect(screen, (180, 60, 60), close_btn_rect, border_radius=4)
-        pygame.draw.rect(screen, (220, 100, 100), close_btn_rect, width=1, border_radius=4)
-        close_font = get_font(18, bold=True)
-        close_text = close_font.render("X", True, (255, 255, 255))
-        close_text_rect = close_text.get_rect(center=close_btn_rect.center)
-        screen.blit(close_text, close_text_rect)
-        self.regions.append({'rect': close_btn_rect, 'action': 'close_swap_popup'})
-        
-        # Item list
-        item_size = 56
-        item_spacing = 12
-        items_per_row = 5
-        start_x = popup_rect.x + 20
-        start_y = popup_rect.y + 60
-        
-        icon_font = get_font(18, bold=True)
-        
-        for idx, (key, item) in enumerate(items_to_show):
-            if not item:
-                continue
-                
-            row = idx // items_per_row
-            col = idx % items_per_row
-            
-            item_x = start_x + col * (item_size + item_spacing)
-            item_y = start_y + row * (item_size + item_spacing)
-            
-            item_rect = pygame.Rect(item_x, item_y, item_size, item_size)
-            
-            # Check if this item is currently equipped
-            is_equipped = False
-            if self.swap_popup_type == 'gear':
-                is_equipped = key in inventory.gear_slots
-            else:
-                is_equipped = any(s and s.key == key for s in inventory.consumable_slots)
-            
-            # Draw item
-            pygame.draw.rect(screen, item.color, item_rect.inflate(-8, -8), border_radius=6)
-            
-            # Rarity border
-            border_color = rarity_border_color(item)
-            pygame.draw.rect(screen, border_color, item_rect, width=2, border_radius=8)
-            
-            # Green border if equipped
-            if is_equipped:
-                pygame.draw.rect(screen, (120, 230, 180), item_rect.inflate(4, 4), width=2, border_radius=10)
-            
-            # Draw icon
-            icon_surf = None
-            if hasattr(item, 'icon_path') and item.icon_path:
-                surf = _safe_load_icon(item.icon_path, (item_size - 8, item_size - 8))
-                if surf:
-                    icon_surf = surf
-                else:
-                    try:
-                        icon_surf = load_icon_masked(item.icon_path, (item_size - 8, item_size - 8), radius=6)
-                    except Exception:
-                        icon_surf = None
-            if icon_surf:
-                screen.blit(icon_surf, icon_surf.get_rect(center=item_rect.center))
-            else:
-                if hasattr(item, 'icon_letter'):
-                    icon_text = icon_font.render(item.icon_letter, True, (20, 20, 28))
-                    icon_text_rect = icon_text.get_rect(center=item_rect.center)
-                    screen.blit(icon_text, icon_text_rect)
-            
-            # Show count for consumables
-            if self.swap_popup_type == 'consumable':
-                count = inventory._total_available_count(key)
-                if count > 0:
-                    count_font = get_font(14, bold=True)
-                    count_text = count_font.render(str(count), True, (255, 255, 255))
-                    count_rect = count_text.get_rect(bottomright=(item_rect.right - 3, item_rect.bottom - 3))
-                    screen.blit(count_text, count_rect)
-            
-            # Register clickable region
-            self.regions.append({'rect': item_rect, 'action': 'swap_select_item', 'item_key': key})
     
     def handle_mouse_click(self, pos):
         """Handle mouse clicks in shop"""
         if not self.shop_open:
-            return
-        
-        # If swap popup is open, handle it separately
-        if self.swap_popup_open:
-            self._handle_swap_popup_click(pos)
             return
         
         for info in self.regions:
@@ -2040,19 +2107,11 @@ class Shop:
                     elif self.selection_category == 'consumable' and 0 <= self.selection < len(self.selected_consumables):
                         selected_item = self.selected_consumables[self.selection]
                     if selected_item:
+                        # Trigger click feedback
+                        self.buy_button_click_time = pygame.time.get_ticks()
                         self.purchase_item(selected_item)
                 elif action == 'exit':
                     self.close_shop()
-                elif action == 'swap_gear_slot':
-                    # Open inventory popup for gear
-                    slot_idx = info.get('slot_index')
-                    if slot_idx is not None:
-                        self._open_swap_popup('gear', slot_idx)
-                elif action == 'swap_consumable_slot':
-                    # Open inventory popup for consumables
-                    slot_idx = info.get('slot_index')
-                    if slot_idx is not None:
-                        self._open_swap_popup('consumable', slot_idx)
                 elif action == 'scroll_up_gear':
                     if self.gear_scroll_offset > 0:
                         self.gear_scroll_offset = max(0, self.gear_scroll_offset - 50)
