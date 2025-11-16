@@ -1238,3 +1238,300 @@ class Golem(Enemy):
     def get_base_color(self):
         """Get the base color for Bee enemy."""
         return (240, 180, 60) if not self.combat.is_invincible() else (140, 120, 50)
+
+class KnightMonster(Enemy):
+    """Elite melee enemy with combo attacks, parry, and evasive dodges."""
+    def __init__(self, x, ground_y):
+        combat_config = {
+            'max_hp': 28,
+            'default_ifr': 8,
+            'money_drop': (20, 40)
+        }
+        super().__init__(x, ground_y, width=28, height=22, combat_config=combat_config,
+                        vision_range=280, cone_half_angle=math.pi/4, turn_rate=0.06)
+        
+        # KnightMonster-specific properties
+        self.type = "KnightMonster"
+        self.state = 'idle'  # idle, windup, combo, dash_evade, parry, recover
+        self.cool = 0
+        self.windup_t = 0
+        self.combo_len = 0
+        self.combo_idx = 0
+        self.combo_gap_t = 0
+        self.evade_t = 0
+        self.parry_window = 0
+        self.parry_cool = 0
+        self.tele_text = ''
+        
+        # Behavior tuning
+        self.hit_windup = 12
+        self.hit_gap = 10
+        self.evade_speed = 8.0
+        self.evade_time = 12
+        self.dash_after_evade_slow = 0.86
+        self.parry_len = 12
+        self.parry_post_recover = 18
+        self.min_combo_dist = 22
+        self.max_combo_dist = 75
+        self.evade_trigger_dist = 64
+        
+        # Edge-detect player attack start for 10% "immortal dodge"
+        self._prev_player_attacking = False
+        
+        self.base_speed = 1.0
+        self.can_jump = False
+    
+    def _get_terrain_traits(self):
+        """KnightMonster is a ground-based fighter"""
+        return ['ground', 'strong']
+    
+    def _set_movement_strategy(self):
+        """KnightMonster uses custom AI, no standard strategy"""
+        self.movement_strategy = None
+    
+    def tick(self, level, player):
+        if not self.combat.alive:
+            return
+        
+        # Update combat timers
+        self.combat.update()
+        self.handle_status_effects()
+        
+        # Custom timers
+        if self.cool > 0:
+            self.cool -= 1
+        if self.parry_cool > 0:
+            self.parry_cool -= 1
+        if self.parry_window > 0:
+            self.parry_window -= 1
+        
+        epos = (self.rect.centerx, self.rect.centery)
+        ppos = (player.rect.centerx, player.rect.centery)
+        dx, dy = ppos[0] - epos[0], ppos[1] - epos[1]
+        dist = (dx*dx + dy*dy) ** 0.5
+        
+        # Turn smoothly toward player
+        dist_to_player = self.update_vision_cone(ppos)
+        
+        # Vision and LOS check
+        has_los, in_cone = self.check_vision_cone(level, ppos)
+        
+        # Player attack status detection
+        player_attacking_now = bool(
+            getattr(player, 'attack_cd', 0) < ATTACK_COOLDOWN - 5 or
+            getattr(player, 'charging', False)
+        )
+        
+        # 10% "immortal" dodge on attack start
+        if (not self._prev_player_attacking) and player_attacking_now:
+            if has_los and dist < self.evade_trigger_dist and self.cool == 0 and random.random() < 0.10:
+                self._start_evade_away_from(dx, dy, immortal=True)
+        self._prev_player_attacking = player_attacking_now
+        
+        # ---- State machine ----
+        if self.state == 'idle':
+            self.tele_text = ''
+            player_threat = player_attacking_now
+            
+            if has_los and dist < self.evade_trigger_dist and self.cool == 0 and (player_threat or random.random() < 0.06):
+                self._start_evade_away_from(dx, dy, immortal=False)
+            elif has_los and self.cool == 0 and self.min_combo_dist <= dist <= self.max_combo_dist:
+                self._start_combo()
+            elif has_los and dist < self.min_combo_dist and self.parry_cool == 0 and random.random() < 0.03:
+                self._start_parry()
+        
+        elif self.state == 'windup':
+            if self.windup_t == 0:
+                if (has_los and self.min_combo_dist <= dist <= self.max_combo_dist and 
+                    player_attacking_now and self.parry_cool == 0):
+                    self._parry_clash(player)
+                else:
+                    self._do_strike(player)
+                    if self.combo_idx < self.combo_len:
+                        self.combo_idx += 1
+                        self.combo_gap_t = self.hit_gap
+                        self.windup_t = self.hit_windup
+                        self.tele_text = '!' * min(3, self.combo_idx)
+                    else:
+                        self.state = 'recover'
+                        self.cool = 36
+                        self.tele_text = ''
+            else:
+                self.windup_t -= 1
+        
+        elif self.state == 'combo':
+            if self.combo_gap_t > 0:
+                self.combo_gap_t -= 1
+            else:
+                self.state = 'windup'
+        
+        elif self.state == 'dash_evade':
+            if self.evade_t > 0:
+                self.evade_t -= 1
+                self.vx *= self.dash_after_evade_slow
+            else:
+                self.vx = 0.0
+                self.state = 'recover'
+                self.cool = 28
+        
+        elif self.state == 'parry':
+            self.vx *= 0.8
+            if self.parry_window == 0:
+                self.state = 'recover'
+                self.cool = self.parry_post_recover
+        
+        elif self.state == 'recover':
+            self.vx *= 0.85
+            if self.cool == 0:
+                self.state = 'idle'
+        
+        # Movement and collisions
+        self.rect.x += int(self.vx)
+        for s in level.solids:
+            if self.rect.colliderect(s):
+                if self.vx > 0:
+                    self.rect.right = s.left
+                else:
+                    self.rect.left = s.right
+                self.vx = 0.0
+        
+        # Gravity
+        self.vy = min(self.vy + min(GRAVITY, 10), 10)
+        self.rect.y += int(self.vy)
+        for s in level.solids:
+            if self.rect.colliderect(s):
+                if self.rect.bottom > s.top and self.rect.centery < s.centery:
+                    self.rect.bottom = s.top
+                    self.vy = 0.0
+        
+        # Update position tracking
+        self.x = float(self.rect.centerx)
+        self.y = float(self.rect.bottom)
+        
+        # Handle collision with player
+        self.combat.handle_collision_with_player(player)
+    
+    # -------------- Actions --------------
+    
+    def _start_combo(self):
+        """Start a combo attack sequence"""
+        self.combo_len = random.randint(1, 3)
+        self.combo_idx = 1
+        self.state = 'windup'
+        self.windup_t = self.hit_windup
+        self.combo_gap_t = 0
+        self.tele_text = '!'
+    
+    def _do_strike(self, player):
+        """Execute a single strike in the combo"""
+        hb = pygame.Rect(0, 0, int(self.rect.w * 1.25), int(self.rect.h * 0.72))
+        if self.facing > 0:
+            hb.midleft = (self.rect.right, self.rect.centery)
+        else:
+            hb.midright = (self.rect.left, self.rect.centery)
+        
+        # Damage scales with combo: 4, 6, 8
+        base = 4
+        dmg = base + (self.combo_idx - 1) * 2
+        kb = 1 if self.combo_idx < self.combo_len else 2
+        
+        hitboxes.append(Hitbox(hb, 10, dmg, self, dir_vec=(self.facing, 0)))
+        self.vx = self.facing * 1.2
+        self.state = 'combo'
+    
+    def _start_evade_away_from(self, dx, dy, immortal=False):
+        """Dash away from player to evade"""
+        away = -1 if dx > 0 else 1
+        self.vx = away * self.evade_speed
+        self.evade_t = self.evade_time
+        self.state = 'dash_evade'
+        self.cool = 22
+        self.tele_text = ':P' if immortal else ('→' if away > 0 else '←')
+        
+        # Grant invincibility during evade
+        ifr_duration = self.evade_time if immortal else (self.evade_time // 2)
+        self.combat.invincible_frames = max(self.combat.invincible_frames, ifr_duration)
+    
+    def _start_parry(self):
+        """Enter parry stance"""
+        self.state = 'parry'
+        self.parry_window = self.parry_len
+        self.parry_cool = 90
+        self.tele_text = '⛨'
+        self.combat.invincible_frames = max(self.combat.invincible_frames, 6)
+    
+    def _parry_clash(self, player):
+        """Parry and counter player attack"""
+        self.state = 'parry'
+        self.parry_window = max(6, self.parry_len // 2)
+        self.parry_cool = 60
+        self.tele_text = '!'
+        self.combat.invincible_frames = max(self.combat.invincible_frames, 8)
+        
+        floating.append(DamageNumber(self.rect.centerx, self.rect.top - 10, "CLASH!", CYAN))
+        
+        # Knockback player
+        if hasattr(player, 'combat'):
+            knockback_x = (1 if player.rect.centerx > self.rect.centerx else -1) * 3
+            knockback_y = -6
+            player.combat.take_damage(0, (knockback_x, knockback_y), self)
+    
+    # -------------- Combat Overrides --------------
+    
+    def hit(self, hb, player):
+        """Override hit to handle parry mechanics"""
+        if not self.combat.alive:
+            return
+        
+        is_player_hit = getattr(hb, 'owner', None) is player
+        
+        # Parry player attacks
+        if self.parry_window > 0 and is_player_hit:
+            floating.append(DamageNumber(self.rect.centerx, self.rect.top - 8, "PARRY!", CYAN))
+            
+            # Knockback player
+            if hasattr(player, 'combat'):
+                knockback_x = (1 if player.rect.centerx > self.rect.centerx else -1) * 3
+                knockback_y = -6
+                player.combat.take_damage(0, (knockback_x, knockback_y), self)
+            
+            self.state = 'recover'
+            self.cool = 16
+            self.vx = -self.facing * 1.0
+            return
+        
+        # Use combat component for normal damage handling
+        self.combat.handle_hit_by_player_hitbox(hb)
+        
+        # 18% chance to parry after being hit
+        if self.combat.alive and self.parry_cool == 0 and random.random() < 0.18:
+            self._start_parry()
+    
+    def get_base_color(self):
+        """Get the base color for KnightMonster"""
+        return (60, 120, 255) if not self.combat.is_invincible() else (35, 80, 200)
+    
+    def draw(self, surf, camera, show_los=False, show_nametags=False):
+        """Draw the KnightMonster with custom telegraph"""
+        if not self.combat.alive:
+            return
+        
+        # Draw debug vision cone
+        self.draw_debug_vision(surf, camera, show_los)
+        
+        # Draw the enemy body with status effects
+        base_color = self.get_base_color()
+        status_color = self.get_status_effect_color(base_color)
+        pygame.draw.rect(surf, status_color, camera.to_screen_rect(self.rect), border_radius=5)
+        
+        # Draw status effect indicators
+        self.draw_status_effects(surf, camera)
+        
+        # Draw telegraph text
+        if getattr(self, 'tele_text', ''):
+            from src.core.utils import draw_text
+            draw_text(surf, self.tele_text, camera.to_screen((self.rect.centerx - 5, self.rect.top - 12)),
+                     (255, 210, 120), size=18, bold=True)
+        
+        # Draw nametag
+        self.draw_nametag(surf, camera, show_nametags)

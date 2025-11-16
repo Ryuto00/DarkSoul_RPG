@@ -271,11 +271,11 @@ class AreaRegion:
         if not aet:
             surface = props.get("spawn_surface")
             if surface == 'ground':
-                aet = ['Bug','Frog','Archer','Assassin','Golem']
+                aet = ['Bug','Frog','Archer','Assassin','KnightMonster','Golem']
             elif surface == 'air':
                 aet = ['Bee','WizardCaster']
             else:
-                aet = ['Bug','Frog','Archer','Assassin','Bee','WizardCaster','Golem']
+                aet = ['Bug','Frog','Archer','Assassin','Bee','WizardCaster','KnightMonster','Golem']
 
         return cls(
             region_id=str(data.get("region_id", f"{data.get('kind', 'unknown')}_{id(data)}")),

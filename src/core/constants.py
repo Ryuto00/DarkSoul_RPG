@@ -39,6 +39,7 @@ ENTITY_CHAR_MAP = {
     'w': 'enemy_wizard',
     'a': 'enemy_armor',
     'b': 'enemy_bee',
+    'k': 'enemy_knight',
     'G': 'enemy_boss',
 }
 

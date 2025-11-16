@@ -10,14 +10,14 @@ This is kept for backward compatibility and can be accessed via menu toggle.
 import pygame
 from typing import List, Optional
 from config import TILE, CYAN, WIDTH, HEIGHT
-from ..entities.entities import Bug, Boss, Frog, Archer, WizardCaster, Assassin, Bee, Golem
+from ..entities.entities import Bug, Boss, Frog, Archer, WizardCaster, Assassin, Bee, Golem, KnightMonster
 from ..tiles import TileParser, TileRenderer, TileRegistry, TileType
 from ..tiles.tile_collision import TileCollision
 
 # Rooms (tilemaps). Legend:
 #   Tiles: # wall, . air/empty, _ platform, @ breakable wall, % breakable floor
 #   Entities: S spawn, D door->next room
-#   Enemies: E=Bug, f=Frog, r=Archer, w=WizardCaster, a=Assassin, b=Bee, G=Golem boss
+#   Enemies: E=Bug, f=Frog, r=Archer, w=WizardCaster, a=Assassin, b=Bee, k=KnightMonster, G=Golem boss
 ROOMS = [
     # Room 1 (larger)
      [
@@ -35,7 +35,7 @@ ROOMS = [
         "#.....#########....D...................#",
         "#.............#........................#",
         "#.............#############............#",
-        "#..............................b.......#",
+        "#.......................k..........b...#",
         "#......................................#",
         "#...w...........w......................#",
         "########################################",
@@ -50,7 +50,7 @@ ROOMS = [
         "#...........r...........b..............#",
         "#####......######......................#",
         "#..........#....#......................#",
-        "#........###....#...................a..#",
+        "#........###....#...............k...a..#",
         "#..........#....######.................#",
         "#.....s....#...........................#",
         "############...................b.......#",
@@ -75,7 +75,7 @@ ROOMS = [
         "#...........#.....######...............#",
         "#........w..#..........................#",
         "#.....####..#..........................#",
-        "#...........#..a...................E...#",
+        "#...........#..a...............k...E...#",
         "#...........############################",
         "#.......................b..............#",
         "#...S..................................#",
@@ -251,6 +251,8 @@ class LegacyLevel:
                     self.enemies.append(Assassin(rect.centerx, rect.bottom))
                 elif entity_type == 'enemy_bee':
                     self.enemies.append(Bee(rect.centerx, rect.bottom))
+                elif entity_type == 'enemy_knight':
+                    self.enemies.append(KnightMonster(rect.centerx, rect.bottom))
                 elif entity_type == 'enemy_boss':
                     self.enemies.append(Golem(rect.centerx, rect.bottom))
                 elif entity_type == 'door':

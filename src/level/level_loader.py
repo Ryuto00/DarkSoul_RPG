@@ -52,11 +52,11 @@ class LevelLoader:
                             if aet is None or (isinstance(aet, list) and len(aet) == 0):
                                 surface = props.get('spawn_surface', 'both')
                                 if surface == 'ground':
-                                    a['allowed_enemy_types'] = ['Bug','Frog','Archer','Assassin','Golem']
+                                    a['allowed_enemy_types'] = ['Bug','Frog','Archer','Assassin','KnightMonster','Golem']
                                 elif surface == 'air':
                                     a['allowed_enemy_types'] = ['Bee','WizardCaster']
                                 else:
-                                    a['allowed_enemy_types'] = ['Bug','Frog','Archer','Assassin','Bee','WizardCaster','Golem']
+                                    a['allowed_enemy_types'] = ['Bug','Frog','Archer','Assassin','Bee','WizardCaster','KnightMonster','Golem']
                         except Exception:
                             continue
         except Exception:

@@ -1008,11 +1008,11 @@ def add_enemy_spawn_areas(
                     aet = allowed_enemy_types
                 else:
                     if surface == 'ground':
-                        aet = ['Bug','Frog','Archer','Assassin','Golem']
+                        aet = ['Bug','Frog','Archer','Assassin','KnightMonster','Golem']
                     elif surface == 'air':
                         aet = ['Bee','WizardCaster']
                     else:
-                        aet = ['Bug','Frog','Archer','Assassin','Bee','WizardCaster','Golem']
+                        aet = ['Bug','Frog','Archer','Assassin','Bee','WizardCaster','KnightMonster','Golem']
 
                 props = {
                     'spawn_cap': max(1, (rw * rh) // 2),
@@ -1139,11 +1139,11 @@ def add_enemy_spawn_areas(
                 aet = allowed_enemy_types
             else:
                 if surface == 'ground':
-                    aet = ['Bug','Frog','Archer','Assassin','Golem']
+                    aet = ['Bug','Frog','Archer','Assassin','KnightMonster','Golem']
                 elif surface == 'air':
                     aet = ['Bee','WizardCaster']
                 else:
-                    aet = ['Bug','Frog','Archer','Assassin','Bee','WizardCaster','Golem']
+                    aet = ['Bug','Frog','Archer','Assassin','Bee','WizardCaster','KnightMonster','Golem']
 
             props = {
                 'spawn_cap': max(1, (rw * rh) // 1),
