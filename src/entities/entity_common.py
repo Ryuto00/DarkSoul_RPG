@@ -37,7 +37,7 @@ hitboxes = []
 floating = []
 
 class Hitbox:
-    def __init__(self, rect, lifetime, damage, owner, dir_vec=(1,0), pogo=False, vx=0.0, vy=0.0, aoe_radius=0, visual_only=False, pierce=False, bypass_ifr=False, tag=None):
+    def __init__(self, rect, lifetime, damage, owner, dir_vec=(1,0), pogo=False, vx=0.0, vy=0.0, aoe_radius=0, visual_only=False, pierce=False, bypass_ifr=False, tag=None, has_sprite=False):
         self.rect = rect.copy()
         self.lifetime = lifetime
         self.damage = damage
@@ -54,6 +54,8 @@ class Hitbox:
         # Optional tag for custom effects (e.g., 'stun')
         self.tag = tag
         self.alive = True
+        # When True, suppresses fallback rectangle drawing (sprite will be drawn separately)
+        self.has_sprite = has_sprite
 
     def tick(self):
         # move if velocity set (keep as float for precision, convert only when applying)
@@ -68,6 +70,10 @@ class Hitbox:
             self.alive = False
 
     def draw(self, surf, camera):
+        # Skip drawing if this hitbox has a sprite (sprite is drawn separately by enemy's draw_projectile_sprites)
+        if getattr(self, 'has_sprite', False):
+            return
+        
         # if this hitbox represents an AOE, draw a circle
         if getattr(self, 'aoe_radius', 0) > 0:
             cx, cy = camera.to_screen(self.rect.center)

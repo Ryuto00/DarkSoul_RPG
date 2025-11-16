@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import random
 import pygame
+import logging
 from typing import Optional
 
 from config import (
@@ -18,6 +19,8 @@ from src.entities.entity_common import Hitbox, DamageNumber, hitboxes, floating,
 from src.entities.player_entity import Player
 from src.ai.enemy_movement import MovementStrategyFactory
 from src.entities.components.combat_component import CombatComponent
+
+logger = logging.getLogger(__name__)
 
 
 class Enemy:
@@ -75,6 +78,26 @@ class Enemy:
         self.sliding = False
         self.stuck = False
         self.stuck_timer = 0
+        
+        # ----------------------------
+        # SPRITE ANIMATION SYSTEM (Friend's Code - Universal)
+        # ----------------------------
+        # Sprite rendering (optional - enemies can have sprites or use colored rects)
+        self.sprite_idle = None
+        self.sprite = None
+        self.sprite_offset_y = 0
+        self.sprite_rect = None
+        
+        # Attack animation system (optional - for animated enemies)
+        self.atk_frames = []
+        self.play_attack_anim = False
+        self.atk_index = 0
+        self.atk_timer = 0
+        self.atk_speed = 4  # Frames per animation step
+        
+        # Projectile sprite system (optional - for enemies with projectile attacks)
+        self.projectile_sprite = None
+        self.projectile_hitboxes = []
         
         # Set movement strategy based on enemy type
         self._set_movement_strategy()
@@ -633,6 +656,160 @@ class Enemy:
             fg_rect = pygame.Rect(top_left[0], top_left[1], width, 6)
             pygame.draw.rect(surf, (60, 60, 60), bg_rect)
             pygame.draw.rect(surf, (240, 60, 60), fg_rect)
+    
+    # ========================================================================
+    # SPRITE ANIMATION SYSTEM (Friend's Code - Made Universal for All Enemies)
+    # ========================================================================
+    
+    def load_sprite_system(self, idle_path, sprite_size=(96, 128), offset_y=55):
+        """
+        Load sprite system for this enemy (Friend's sprite loading code).
+        
+        Args:
+            idle_path: Path to idle sprite (e.g., "assets/monster/Dark_Knight.png")
+            sprite_size: Tuple of (width, height) to scale sprite to
+            offset_y: Vertical offset for sprite positioning
+        """
+        try:
+            img = pygame.image.load(idle_path).convert_alpha()
+            self.sprite_idle = pygame.transform.scale(img, sprite_size)
+            self.sprite = self.sprite_idle
+            self.sprite_offset_y = offset_y
+            
+            # Create sprite rect for positioning
+            self.sprite_rect = self.sprite.get_rect()
+            self.sprite_rect.midbottom = self.rect.midbottom
+        except Exception as e:
+            print(f"[ERROR] Cannot load sprite {idle_path}: {e}")
+            self.sprite_idle = None
+            self.sprite = None
+            self.sprite_rect = self.rect.copy()
+    
+    def load_attack_animation(self, frame_paths, sprite_size=(96, 128), anim_speed=4):
+        """
+        Load attack animation frames (Friend's animation loading code).
+        
+        Args:
+            frame_paths: List of paths to animation frames
+            sprite_size: Tuple of (width, height) to scale frames to
+            anim_speed: Frames per animation step
+        """
+        self.atk_frames = []
+        for path in frame_paths:
+            try:
+                frame = pygame.image.load(path).convert_alpha()
+                self.atk_frames.append(pygame.transform.scale(frame, sprite_size))
+            except Exception as e:
+                print(f"[ERROR] Cannot load animation frame {path}: {e}")
+        
+        self.atk_speed = anim_speed
+    
+    def load_projectile_sprite(self, sprite_path, sprite_size=(42, 42)):
+        """
+        Load projectile sprite (Friend's projectile sprite code).
+        
+        Args:
+            sprite_path: Path to projectile sprite
+            sprite_size: Tuple of (width, height) to scale sprite to
+        """
+        try:
+            sprite_img = pygame.image.load(sprite_path).convert_alpha()
+            self.projectile_sprite = pygame.transform.scale(sprite_img, sprite_size)
+        except Exception as e:
+            print(f"[ERROR] Cannot load projectile sprite {sprite_path}: {e}")
+            self.projectile_sprite = None
+    
+    def update_facing_from_player(self, player):
+        """
+        Update facing direction based on player position (Friend's facing code).
+        Integrates with your vision system.
+        """
+        if hasattr(player, 'rect'):
+            self.facing = -1 if player.rect.centerx < self.rect.centerx else 1
+    
+    def update_attack_animation(self):
+        """
+        Update attack animation frame (Friend's animation update code).
+        Call this every frame in tick() when animation is playing.
+        """
+        if self.play_attack_anim and self.atk_frames:
+            self.atk_timer += 1
+            if self.atk_timer >= self.atk_speed:
+                self.atk_timer = 0
+                self.atk_index += 1
+                if self.atk_index >= len(self.atk_frames):
+                    # Animation complete
+                    self.play_attack_anim = False
+                    self.sprite = self.sprite_idle
+                    self.atk_index = 0
+                else:
+                    # Next frame
+                    self.sprite = self.atk_frames[self.atk_index]
+    
+    def start_attack_animation(self):
+        """Start playing attack animation (Friend's animation trigger code)."""
+        if self.atk_frames:
+            self.play_attack_anim = True
+            self.atk_index = 0
+            self.atk_timer = 0
+    
+    def sync_sprite_position(self):
+        """Sync sprite rect with collision rect (Friend's positioning code)."""
+        if hasattr(self, 'sprite_rect') and self.sprite_rect:
+            self.sprite_rect.midbottom = (
+                self.rect.midbottom[0],
+                self.rect.midbottom[1] + self.sprite_offset_y
+            )
+    
+    def clean_projectile_hitboxes(self):
+        """Clean up dead projectile hitboxes (Friend's cleanup code)."""
+        if hasattr(self, 'projectile_hitboxes'):
+            self.projectile_hitboxes = [
+                hb for hb in self.projectile_hitboxes 
+                if hb.alive and hb in hitboxes
+            ]
+    
+    def draw_sprite_with_animation(self, surf, camera):
+        """
+        Draw sprite with animation support (Friend's sprite draw code).
+        Returns True if sprite was drawn, False if fallback needed.
+        """
+        if not self.sprite or not hasattr(self, 'sprite_rect') or not self.sprite_rect:
+            return False
+        
+        # Calculate screen position
+        screen_pos = camera.to_screen(self.sprite_rect.topleft)
+        
+        # Flip sprite based on facing direction
+        draw_sprite = pygame.transform.flip(self.sprite, True, False) if self.facing == -1 else self.sprite
+        
+        # Apply invincibility flicker effect
+        if self.combat.is_invincible():
+            temp = draw_sprite.copy()
+            temp.set_alpha(150)
+            surf.blit(temp, screen_pos)
+        else:
+            surf.blit(draw_sprite, screen_pos)
+        
+        return True
+    
+    def draw_projectile_sprites(self, surf, camera):
+        """Draw projectile sprites scaled to match hitbox size for accurate visual feedback."""
+        if self.projectile_sprite and hasattr(self, 'projectile_hitboxes'):
+            for hb in self.projectile_hitboxes:
+                # Scale sprite to match hitbox dimensions for visual accuracy
+                hitbox_w = hb.rect.width
+                hitbox_h = hb.rect.height
+                scaled_sprite = pygame.transform.scale(self.projectile_sprite, (hitbox_w, hitbox_h))
+                
+                # Center sprite on hitbox
+                px = hb.rect.x
+                py = hb.rect.y
+                surf.blit(scaled_sprite, camera.to_screen((px, py)))
+    
+    # ========================================================================
+    # END OF SPRITE ANIMATION SYSTEM
+    # ========================================================================
 
     def draw(self, surf, camera, show_los=False, show_nametags=False):
         if not getattr(self, 'combat', None) or not getattr(self.combat, 'alive', True):
@@ -1318,7 +1495,7 @@ class Bee(Enemy):
 
 
 class Golem(Enemy):
-    """Boss with random pattern: dash (!), shoot (!!), stun (!!)."""
+    """Boss with random pattern: dash (!), shoot (!!), stun (!!). Features sprite animations."""
     def __init__(self, x, ground_y):
         combat_config = {
             'max_hp': 120,
@@ -1327,15 +1504,85 @@ class Golem(Enemy):
         }
         super().__init__(x, ground_y, width=56, height=44, combat_config=combat_config,
                         vision_range=500, cone_half_angle=math.pi/3, turn_rate=0.03)
-        # Golem-specific properties
+        # ----------------------------
+        # Basic properties
+        # ----------------------------
         self.cool = 0
-        # Expose attributes expected by validation/tests.
         self.type = "Golem"
         self.tele_t = 0
-        self.tele_text = ''
+        self.tele_text = ""
         self.action = None
         self.base_speed = 0.8
         self.can_jump = False
+        self.facing = 1
+        
+        # ----------------------------
+        # Load Sprite System (Friend's Code - Using Universal System)
+        # ----------------------------
+        # Load idle sprite
+        try:
+            img = pygame.image.load("assets/monster/Dark_Knight.png").convert_alpha()
+            self.sprite_idle = pygame.transform.scale(img, (96,128))
+        except:
+            print("[ERROR] Missing Dark_Knight.png")  # Friend's error handling
+            self.sprite_idle = None
+        
+        self.sprite = self.sprite_idle
+        self.sprite_offset_y = 55  # Friend's original offset value
+        
+        # Sprite rect
+        if self.sprite:
+            self.sprite_rect = self.sprite.get_rect()
+            self.sprite_rect.midbottom = self.rect.midbottom
+        else:
+            self.sprite_rect = self.rect.copy()
+        
+        # ----------------------------
+        # Load Attack Animation (Friend's Code - Using Universal System)
+        # ----------------------------
+        self.atk_frames = []
+        for i in range(1,5):
+            path = f"assets/monster/atk/Dark_Knight_ATK{i}.png"
+            try:
+                frame = pygame.image.load(path).convert_alpha()
+                self.atk_frames.append(pygame.transform.scale(frame,(96,128)))
+            except:
+                print(f"[ERROR] Cannot load {path}")  # Friend's error handling
+        
+        self.play_attack_anim = False
+        self.atk_index = 0
+        self.atk_timer = 0
+        self.atk_speed = 4
+        
+        # ----------------------------
+        # Load Aura Projectile Sprite (Friend's Code - Using Universal System)
+        # ----------------------------
+        try:
+            aura_img = pygame.image.load("assets/monster/atk/Dark_Knight_Aura.png").convert_alpha()
+            self.aura_sprite = pygame.transform.scale(aura_img, (42,42))
+            # Note: Using aura_sprite instead of projectile_sprite for Golem's specific naming
+            self.projectile_sprite = self.aura_sprite  # Map to universal system
+        except:
+            print("[ERROR] Missing Aura sprite")  # Friend's error handling
+            self.aura_sprite = None
+            self.projectile_sprite = None
+        
+        # Aura projectile hitboxes (Friend's code - using universal projectile_hitboxes)
+        # NOTE: We use projectile_hitboxes directly (universal system)
+        self.projectile_hitboxes = []
+        # For Golem, aura_hitboxes is just an alias to projectile_hitboxes
+        # Friend's original code used "aura_hitboxes" but universal system uses "projectile_hitboxes"
+        # Both work, they point to the same list
+    
+    @property
+    def aura_hitboxes(self):
+        """Alias for projectile_hitboxes (Friend's original naming)"""
+        return self.projectile_hitboxes
+    
+    @aura_hitboxes.setter
+    def aura_hitboxes(self, value):
+        """Setter to keep aura_hitboxes and projectile_hitboxes in sync"""
+        self.projectile_hitboxes = value
     
     def _get_terrain_traits(self):
         """Golem can move through earth and break obstacles"""
@@ -1346,73 +1593,171 @@ class Golem(Enemy):
         self.movement_strategy = MovementStrategyFactory.create_strategy('ground_patrol')
 
     def tick(self, level, player):
-        if not self.combat.alive: return
+        if not self.combat.alive:
+            return
         
         self.combat.update()
         self.handle_status_effects()
         
-        if self.cool>0: self.cool-=1
+        if self.cool > 0:
+            self.cool -= 1
         
+        # Player pos
         ppos = (player.rect.centerx, player.rect.centery)
-        has_los, in_cone = self.check_vision_cone(level, ppos)
-        dist_to_player = self.update_vision_cone_and_memory(ppos, has_los)
-        
         epos = (self.rect.centerx, self.rect.centery)
+        
+        # INTEGRATION: Friend's simple LOS + Your advanced vision system
+        # Option 1: Friend's original simple LOS (current)
         has_los = los_clear(level, epos, ppos)
         
-        self._has_los = has_los
-        self._los_point = ppos
-        if self.tele_t>0:
+        # Option 2: Use your advanced vision cone system (uncomment to enable)
+        # has_los, in_cone = self.check_vision_cone(level, ppos)
+        # dist_to_player = self.update_vision_cone_and_memory(ppos, has_los)
+        # This gives: alert levels, pursuit memory, investigation points
+        
+        # ----------------------------
+        # Telegraph finish → perform action
+        # ----------------------------
+        if self.tele_t > 0:
             self.tele_t -= 1
-            if self.tele_t==0:
-                if self.action=='dash':
-                    dx = ppos[0]-epos[0]; dy = ppos[1]-epos[1]
-                    dist = max(1.0, (dx*dx+dy*dy)**0.5)
-                    nx, ny = dx/dist, dy/dist
-                    self.vx = nx * 8.0
-                    self.vy = ny * 8.0
-                elif self.action=='shoot' and has_los:
-                    dx = ppos[0]-epos[0]; dy = ppos[1]-epos[1]
-                    dist = max(1.0, (dx*dx+dy*dy)**0.5)
-                    nx, ny = dx/dist, dy/dist
-                    hb = pygame.Rect(0,0,14,10); hb.center = self.rect.center
-                    hitboxes.append(Hitbox(hb, 120, 2, self, dir_vec=(nx,ny), vx=nx*8.0, vy=ny*8.0))
-                elif self.action=='stun':
-                    r = 72
-                    hb = pygame.Rect(0,0,r*2, r*2)
+            if self.tele_t == 0:
+                dx = ppos[0] - epos[0]
+                dy = ppos[1] - epos[1]
+                dist = max(1.0, (dx*dx+dy*dy)**0.5)
+                nx, ny = dx/dist, dy/dist
+                
+                # ----------- DASH -----------
+                if self.action == "dash":
+                    self.play_attack_anim = True
+                    self.atk_index = 0
+                    self.atk_timer = 0
+                    self.vx = nx * 8
+                    self.vy = ny * 8
+                
+                # ----------- SHOOT (Aura) -----------
+                elif self.action == "shoot" and has_los:
+                    hb = pygame.Rect(0,0,26,26)
                     hb.center = self.rect.center
-                    hitboxes.append(Hitbox(hb, 24, 0, self, aoe_radius=r, tag='stun'))
+                    new_hb = Hitbox(
+                        hb,
+                        120,
+                        4,
+                        self,
+                        dir_vec=(nx,ny),
+                        vx=nx*8,
+                        vy=ny*8,
+                        has_sprite=True  # Suppress fallback rectangle (sprite drawn via draw_projectile_sprites)
+                    )
+                    hitboxes.append(new_hb)
+                    self.projectile_hitboxes.append(new_hb)  # Use universal system directly
+                
+                # ----------- STUN -----------
+                elif self.action == "stun":
+                    r = 72
+                    hb = pygame.Rect(0,0,r*2,r*2)
+                    hb.center = self.rect.center
+                    hitboxes.append(Hitbox(hb,24,0,self,aoe_radius=r,tag='stun'))
+                
                 self.cool = 70
-        elif has_los and self.cool==0:
+        
+        # ----------------------------
+        # Choose next attack
+        # ----------------------------
+        elif has_los and self.cool == 0:
             self.action = random.choice(['dash','shoot','stun'])
-            self.tele_text = '!' if self.action=='dash' else '!!'
+            self.tele_text = "!" if self.action=='dash' else "!!"
             self.tele_t = 22 if self.action=='dash' else 18
-
-        if abs(self.vx)>0:
+        
+        # ----------------------------
+        # Move X
+        # ----------------------------
+        if abs(self.vx) > 0:
             self.vx *= 0.9
-            if abs(self.vx)<1.0: self.vx=0
+            if abs(self.vx) < 1:
+                self.vx = 0
         self.rect.x += int(self.vx)
         for s in level.solids:
             if self.rect.colliderect(s):
-                if self.vx>0: self.rect.right=s.left
-                else: self.rect.left=s.right
-                self.vx=0
-        self.vy = getattr(self, 'vy', 0) + min(GRAVITY, 10)
-        self.rect.y += int(min(10, self.vy))
+                if self.vx > 0:
+                    self.rect.right = s.left
+                else:
+                    self.rect.left = s.right
+                self.vx = 0
+        
+        # Facing (Friend's code - now uses universal helper)
+        self.update_facing_from_player(player)
+        
+        # ----------------------------
+        # Attack Animation (Friend's code - using universal helper)
+        # ----------------------------
+        self.update_attack_animation()  # Universal helper does friend's exact logic
+        
+        # ----------------------------
+        # Clean aura hitboxes (Friend's code - using universal helper)
+        # ----------------------------
+        self.clean_projectile_hitboxes()  # Universal helper cleans aura_hitboxes
+        
+        # Sync sprite position (Friend's code - using universal helper)
+        self.sync_sprite_position()
+        
+        # ----------------------------
+        # Move Y
+        # ----------------------------
+        self.vy = getattr(self,'vy',0) + min(GRAVITY,10)
+        self.rect.y += int(min(10,self.vy))
         for s in level.solids:
             if self.rect.colliderect(s):
                 if self.rect.bottom > s.top and self.rect.centery < s.centery:
                     self.rect.bottom = s.top
                     self.vy = 0
-
+        
+        # Sync sprite position again after vertical movement (Friend's code - universal helper)
+        self.sync_sprite_position()
+        
         self.x = float(self.rect.centerx)
         self.y = float(self.rect.bottom)
-
+        
         self.combat.handle_collision_with_player(player)
 
     def get_base_color(self):
-        """Get the base color for Bee enemy."""
+        """Get the base color for Golem enemy."""
         return (240, 180, 60) if not self.combat.is_invincible() else (140, 120, 50)
+    
+    def draw(self, surf, camera, show_los=False, show_nametags=False):
+        """Custom draw with sprite animations (Friend's code - using universal helpers)"""
+        if not self.combat.alive:
+            return
+        
+        # Optional debug: vision cone/LOS
+        self.draw_debug_vision(surf, camera, show_los)
+        
+        # Draw sprite with animation (Friend's exact code via universal helper)
+        sprite_drawn = self.draw_sprite_with_animation(surf, camera)
+        
+        if not sprite_drawn:
+            # Fallback to colored rect (Friend's fallback code)
+            base_color = self.get_base_color()
+            status_color = self.get_status_effect_color(base_color)
+            pygame.draw.rect(surf, status_color, camera.to_screen_rect(self.rect), border_radius=getattr(self, 'draw_border_radius', 4))
+        
+        # Draw aura projectiles (Friend's code - using universal helper)
+        self.draw_projectile_sprites(surf, camera)
+        
+        # Telegraph
+        if self.tele_t > 0:
+            from src.core.utils import draw_text
+            tele_pos = (self.rect.centerx-6, self.rect.top-12)
+            draw_text(
+                surf, self.tele_text,
+                camera.to_screen(tele_pos),
+                (255,120,90), size=22, bold=True
+            )
+        
+        # Draw status effect indicators
+        self.draw_status_effects(surf, camera)
+        
+        # Name and HP
+        self.draw_nametag(surf, camera, show_nametags)
 
 class KnightMonster(Enemy):
     """Elite melee enemy with combo attacks, parry, and evasive dodges."""
