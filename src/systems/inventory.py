@@ -607,7 +607,7 @@ class Inventory:
     def _tooltip_payload(self, info):
         if not info:
             return None
-        payload = {'lines': [], 'color': None, 'letter': ""}
+        payload = {'lines': [], 'item': None, 'color': None, 'letter': ""}
         kind = info['kind']
         if kind in ('gear_slot', 'gear_pool'):
             key = info.get('key')
@@ -630,6 +630,7 @@ class Inventory:
             lines = item.tooltip_lines()
             lines.extend(self._format_modifier_lines(item.modifiers))
             payload['lines'] = lines
+            payload['item'] = item
             payload['color'] = item.color
             payload['letter'] = item.icon_letter
             return payload
@@ -664,6 +665,7 @@ class Inventory:
             if storage_count > 0:
                 lines.append(f"Storage: {storage_count}")
             payload['lines'] = lines
+            payload['item'] = entry
             payload['color'] = entry.color
             payload['letter'] = entry.icon_letter
             return payload
@@ -680,7 +682,8 @@ class Inventory:
             return
         font = get_font(16)
         icon_space = 0
-        if payload.get('color'):
+        # Use new icon system if item is available
+        if payload.get('item'):
             icon_space = 34
         width = max(font.size(line)[0] for line in lines) + 20 + icon_space
         height = len(lines) * 22 + 12
@@ -695,11 +698,23 @@ class Inventory:
         text_x = tooltip_rect.x + 10
         if icon_space:
             icon_rect = pygame.Rect(tooltip_rect.x + 10, tooltip_rect.y + 10, 24, 24)
-            pygame.draw.rect(self.game.screen, payload['color'], icon_rect, border_radius=6)
-            if payload.get('letter'):
-                icon_font = get_font(14, bold=True)
-                icon_surf = icon_font.render(payload['letter'], True, (10,10,20))
-                self.game.screen.blit(icon_surf, icon_surf.get_rect(center=icon_rect.center))
+            item = payload['item']
+            # Draw icon using new system (same as inventory slots)
+            icon_img = None
+            if hasattr(item, 'icon_path') and item.icon_path:
+                icon_img = _safe_load_icon(item.icon_path, (24, 24))
+                if not icon_img:
+                    icon_img = load_icon_masked(item.icon_path, (24, 24), radius=4)
+            if icon_img:
+                self.game.screen.blit(icon_img, icon_img.get_rect(center=icon_rect.center))
+            else:
+                # Fallback to old system for items without icons
+                if payload.get('color'):
+                    pygame.draw.rect(self.game.screen, payload['color'], icon_rect, border_radius=6)
+                if payload.get('letter'):
+                    icon_font = get_font(14, bold=True)
+                    icon_surf = icon_font.render(payload['letter'], True, (10,10,20))
+                    self.game.screen.blit(icon_surf, icon_surf.get_rect(center=icon_rect.center))
             text_x += icon_space
         for i, line in enumerate(lines):
             self.game.screen.blit(font.render(line, True, (230, 230, 245)),
@@ -1276,18 +1291,35 @@ class Inventory:
         for idx, stack in enumerate(self.consumable_slots):
             rect = pygame.Rect(start_x + idx * (slot_size + spacing), start_y, slot_size, slot_size)
             pygame.draw.rect(self.game.screen, (40, 40, 50), rect, border_radius=8)
-            pygame.draw.rect(self.game.screen, (90, 90, 120), rect, width=2, border_radius=8)
             key_label = self._hotkey_label(idx)
             draw_text(self.game.screen, key_label, (rect.x + 4, rect.y + 4), (200, 200, 210), size=14, bold=True)
             inner = rect.inflate(-10, -10)
             entry = self.consumable_catalog.get(stack.key) if stack else None
+            # Use rarity-based border color for items
+            border_color = (90, 90, 120)  # Default border color
             if entry:
-                pygame.draw.rect(self.game.screen, entry.color, inner, border_radius=6)
-                if entry.icon_letter:
-                    icon_font = get_font(18, bold=True)
-                    icon_surface = icon_font.render(entry.icon_letter, True, (30, 30, 40))
-                    icon_rect = icon_surface.get_rect(center=inner.center)
-                    self.game.screen.blit(icon_surface, icon_rect)
+                try:
+                    border_color = rarity_border_color(entry)
+                except Exception:
+                    border_color = (90, 90, 120)
+            pygame.draw.rect(self.game.screen, border_color, rect, width=2, border_radius=8)
+            if entry:
+                # Draw icon using new system (same as inventory slots)
+                icon_img = None
+                if hasattr(entry, 'icon_path') and entry.icon_path:
+                    icon_img = _safe_load_icon(entry.icon_path, (inner.width, inner.height))
+                    if not icon_img:
+                        icon_img = load_icon_masked(entry.icon_path, (inner.width, inner.height), radius=6)
+                if icon_img:
+                    self.game.screen.blit(icon_img, icon_img.get_rect(center=inner.center))
+                else:
+                    # Fallback to old system for items without icons
+                    pygame.draw.rect(self.game.screen, entry.color, inner, border_radius=6)
+                    if entry.icon_letter:
+                        icon_font = get_font(18, bold=True)
+                        icon_surface = icon_font.render(entry.icon_letter, True, (30, 30, 40))
+                        icon_rect = icon_surface.get_rect(center=inner.center)
+                        self.game.screen.blit(icon_surface, icon_rect)
             else:
                 pygame.draw.rect(self.game.screen, (60, 60, 80), inner, width=2, border_radius=6)
             if stack:
