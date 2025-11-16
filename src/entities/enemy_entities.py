@@ -1297,6 +1297,14 @@ class KnightMonster(Enemy):
         self.combat.update()
         self.handle_status_effects()
         
+        # Decrement stun timer
+        if getattr(self, 'stunned', 0) > 0:
+            self.stunned -= 1
+        
+        # Decrement stun timer
+        if getattr(self, 'stunned', 0) > 0:
+            self.stunned -= 1
+        
         # Custom timers
         if self.cool > 0:
             self.cool -= 1
@@ -1329,6 +1337,31 @@ class KnightMonster(Enemy):
         self._prev_player_attacking = player_attacking_now
         
         # ---- State machine ----
+        # Skip AI decisions if stunned or frozen
+        if getattr(self, 'stunned', 0) > 0 or getattr(self, 'frozen', False):
+            # Still apply movement decay during stun
+            self.vx *= 0.9
+            # Apply slow movement and gravity, then return
+            actual_vx = self.vx * getattr(self, 'slow_mult', 1.0)
+            self.rect.x += int(actual_vx)
+            for s in level.solids:
+                if self.rect.colliderect(s):
+                    if actual_vx > 0:
+                        self.rect.right = s.left
+                    else:
+                        self.rect.left = s.right
+                    self.vx = 0.0
+            self.vy = min(self.vy + min(GRAVITY, 10), 10)
+            self.rect.y += int(self.vy)
+            for s in level.solids:
+                if self.rect.colliderect(s):
+                    if self.rect.bottom > s.top and self.rect.centery < s.centery:
+                        self.rect.bottom = s.top
+                        self.vy = 0.0
+            self.x = float(self.rect.centerx)
+            self.y = float(self.rect.bottom)
+            return
+        
         if self.state == 'idle':
             self.tele_text = ''
             player_threat = player_attacking_now
@@ -1385,11 +1418,12 @@ class KnightMonster(Enemy):
             if self.cool == 0:
                 self.state = 'idle'
         
-        # Movement and collisions
-        self.rect.x += int(self.vx)
+        # Movement and collisions (apply slow effect)
+        actual_vx = self.vx * getattr(self, 'slow_mult', 1.0)
+        self.rect.x += int(actual_vx)
         for s in level.solids:
             if self.rect.colliderect(s):
-                if self.vx > 0:
+                if actual_vx > 0:
                     self.rect.right = s.left
                 else:
                     self.rect.left = s.right
