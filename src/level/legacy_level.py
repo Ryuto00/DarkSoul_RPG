@@ -179,6 +179,13 @@ class LegacyLevel:
         self.tile_registry = TileRegistry()
         self.tile_collision = TileCollision(TILE)
 
+        # --- Load Portal Sprite (NEW) ---
+        try:
+            img = pygame.image.load("assets/tiles/portal.png").convert_alpha()
+            self.portal_image = pygame.transform.scale(img, (96, 96))  # scale portal to 96x96
+        except:
+            self.portal_image = None  # fail-safe
+
         # Load static room
         self.index = (index or 0) % len(ROOMS)
         self.current_room_id = f'legacy_room_{self.index}'
@@ -334,7 +341,22 @@ class LegacyLevel:
             # Locked (red) if boss room and boss still alive
             locked = getattr(self, 'is_boss_room', False) and any(getattr(e, 'alive', False) for e in self.enemies)
             col = (200, 80, 80) if locked else CYAN
-            pygame.draw.rect(surf, col, camera.to_screen_rect(d), width=2)
+            
+            # --- Draw Doors using Portal Sprite ---
+            screen_rect = camera.to_screen_rect(d)
+            if self.portal_image:
+                img = self.portal_image
+                # Center sprite on tile (Hitbox 32x32)
+                draw_x = screen_rect.centerx - img.get_width() // 2
+                draw_y = screen_rect.centery - img.get_height() // 2
+                surf.blit(img, (draw_x, draw_y))
+            else:
+                # Fallback to colored rectangle if portal image fails to load
+                pygame.draw.rect(surf, col, screen_rect, width=2)
+            
+            # Draw red border if locked (boss not defeated)
+            if locked:
+                pygame.draw.rect(surf, (200, 80, 80), screen_rect, width=2)
 
     def draw_debug(self, surf, camera, show_collision_boxes=False):
         """Draw debug information about tiles."""

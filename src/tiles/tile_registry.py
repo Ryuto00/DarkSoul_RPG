@@ -82,7 +82,8 @@ class TileRegistry:
                 base_color=(40, 160, 220),
                 border_radius=4,
                 render_border=True,
-                border_color=(255, 255, 255)
+                border_color=(255, 255, 255),
+                sprite_path="assets/tiles/portal.png"
             ),
             interaction=InteractionProperties(
                 is_trigger=True,
@@ -102,7 +103,8 @@ class TileRegistry:
                 base_color=(180, 120, 40),
                 border_radius=4,
                 render_border=True,
-                border_color=(255, 255, 255)
+                border_color=(255, 255, 255),
+                sprite_path="assets/tiles/portal.png"
             ),
             interaction=InteractionProperties(
                 interactable=True,
@@ -126,7 +128,8 @@ class TileRegistry:
                 base_color=(200, 100, 50),
                 border_radius=4,
                 render_border=True,
-                border_color=(255, 200, 100)
+                border_color=(255, 200, 100),
+                sprite_path="assets/tiles/portal.png"
             ),
             interaction=InteractionProperties(
                 interactable=True,
@@ -150,7 +153,8 @@ class TileRegistry:
                 base_color=(150, 80, 120),
                 border_radius=4,
                 render_border=True,
-                border_color=(200, 150, 255)
+                border_color=(200, 150, 255),
+                sprite_path="assets/tiles/portal.png"
             ),
             interaction=InteractionProperties(
                 interactable=True,
