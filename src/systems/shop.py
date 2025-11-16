@@ -78,6 +78,11 @@ class Shop:
         self.buy_button_clicked = False
         self.buy_button_click_time = 0
         
+        # Slot selection state for viewing inventory stock
+        self.selected_slot_type = None  # 'gear' or 'consumable'
+        self.selected_slot_index = None  # Which slot (0-2)
+        self.stock_scroll_offset = 0  # Scroll offset for stock view
+        
         # Create initial inventory
         self.refresh_inventory()
     
@@ -331,13 +336,8 @@ class Shop:
         if event.type == pygame.MOUSEWHEEL:
             # Detect which column the mouse is over for targeted scrolling
             mouse_pos = pygame.mouse.get_pos()
-            scrolled = self._handle_mousewheel_scroll(mouse_pos, event.y)
-            if not scrolled:
-                # Fallback to default scroll behavior
-                if event.y > 0:
-                    self._scroll_up()
-                elif event.y < 0:
-                    self._scroll_down()
+            # Only scroll if mouse is over a scrollable column (no fallback)
+            self._handle_mousewheel_scroll(mouse_pos, event.y)
         elif event.type == pygame.KEYDOWN:
             # Navigation - LEFT/RIGHT switch between categories (spatial navigation)
             if event.key in [pygame.K_LEFT, pygame.K_a]:
@@ -1056,9 +1056,15 @@ class Shop:
             slot_rect = pygame.Rect(item_x, arm_row_y, slot_size, slot_size)
 
             is_hovering = slot_rect.collidepoint(mouse_pos)
+            is_selected = (self.selected_slot_type == 'gear' and self.selected_slot_index == i)
 
             # Slot background
-            bg_color = (50, 50, 65) if is_hovering else (46, 52, 72)
+            if is_selected:
+                bg_color = (70, 90, 110)  # Highlighted when selected
+            elif is_hovering:
+                bg_color = (50, 50, 65)
+            else:
+                bg_color = (46, 52, 72)
             pygame.draw.rect(screen, bg_color, slot_rect, border_radius=8)
 
             # Get equipped item
@@ -1069,7 +1075,8 @@ class Shop:
                 # Draw item background and rarity border
                 pygame.draw.rect(screen, item.color, slot_rect.inflate(-8, -8), border_radius=6)
                 border_color = rarity_border_color(item)
-                pygame.draw.rect(screen, border_color, slot_rect, width=2 if is_hovering else 1, border_radius=8)
+                border_width = 3 if is_selected else (2 if is_hovering else 1)
+                pygame.draw.rect(screen, border_color, slot_rect, width=border_width, border_radius=8)
 
                 # Icon (try true-alpha, then masked)
                 icon_surf = None
@@ -1098,7 +1105,8 @@ class Shop:
                 num_text = num_font.render(str(i + 1), True, (100, 100, 120))
                 screen.blit(num_text, num_text.get_rect(center=slot_rect.center))
 
-            # Clickable region removed - no swap popup functionality
+            # Register clickable region for slot selection
+            self.regions.append({'rect': slot_rect, 'action': 'select_gear_slot', 'slot_index': i})
 
         # Consumables header (placed under armament row)
         cons_header_rect = pygame.Rect(rect.x + 4, arm_row_y + slot_size + 12, rect.width - 8, header_height)
@@ -1115,9 +1123,15 @@ class Shop:
             slot_rect = pygame.Rect(item_x, cons_row_y, slot_size, slot_size)
 
             is_hovering = slot_rect.collidepoint(mouse_pos)
+            is_selected = (self.selected_slot_type == 'consumable' and self.selected_slot_index == i)
 
             # Slot background
-            bg_color = (50, 50, 65) if is_hovering else (46, 52, 72)
+            if is_selected:
+                bg_color = (70, 90, 110)  # Highlighted when selected
+            elif is_hovering:
+                bg_color = (50, 50, 65)
+            else:
+                bg_color = (46, 52, 72)
             pygame.draw.rect(screen, bg_color, slot_rect, border_radius=8)
 
             # Get equipped consumable
@@ -1128,7 +1142,8 @@ class Shop:
                 # Draw item background and rarity border
                 pygame.draw.rect(screen, item.color, slot_rect.inflate(-8, -8), border_radius=6)
                 border_color = rarity_border_color(item)
-                pygame.draw.rect(screen, border_color, slot_rect, width=2 if is_hovering else 1, border_radius=8)
+                border_width = 3 if is_selected else (2 if is_hovering else 1)
+                pygame.draw.rect(screen, border_color, slot_rect, width=border_width, border_radius=8)
 
                 # Icon
                 icon_surf = None
@@ -1166,15 +1181,187 @@ class Shop:
                 hotkey_text = hotkey_font.render(hotkey, True, (100, 100, 120))
                 screen.blit(hotkey_text, hotkey_text.get_rect(center=slot_rect.center))
 
-            # Clickable region removed - no swap popup functionality
+            # Register clickable region for slot selection
+            self.regions.append({'rect': slot_rect, 'action': 'select_consumable_slot', 'slot_index': i})
+    
+    def _draw_inventory_stock_view(self, screen, rect):
+        """Draw inventory stock view when a slot is selected (like in inventory system)"""
+        if not hasattr(self.game, 'inventory'):
+            return
+        
+        inventory = self.game.inventory
+        
+        # Header
+        header_height = 50
+        header_rect = pygame.Rect(rect.x + 4, rect.y + 4, rect.width - 8, header_height)
+        pygame.draw.rect(screen, (45, 40, 55), header_rect, border_radius=8)
+        pygame.draw.rect(screen, (180, 160, 140), header_rect, width=2, border_radius=8)
+        
+        title_font = get_font(18, bold=True)
+        if self.selected_slot_type == 'gear':
+            title_text = title_font.render("Armory Stock", True, (240, 220, 190))
+        else:
+            title_text = title_font.render("Consumable Stock", True, (240, 220, 190))
+        screen.blit(title_text, (header_rect.x + 10, header_rect.y + 15))
+        
+        # Get items to display
+        if self.selected_slot_type == 'gear':
+            # Only show gear that is not already equipped (same as inventory)
+            items_to_show = [(key, inventory.armament_catalog.get(key)) 
+                           for key in inventory.armament_order
+                           if key not in inventory.gear_slots]
+        else:
+            # Only show consumables with stock
+            items_to_show = [(key, inventory.consumable_catalog.get(key)) 
+                           for key in inventory.consumable_order 
+                           if inventory._storage_count(key) > 0]
+        
+        # Unequip button
+        unequip_button_height = 36
+        unequip_button_y = header_rect.bottom + 8
+        unequip_button_rect = pygame.Rect(rect.x + 10, unequip_button_y, rect.width - 20, unequip_button_height)
+        
+        # Check if currently equipped slot has an item
+        has_equipped_item = False
+        if self.selected_slot_type == 'gear' and hasattr(self.game, 'inventory') and self.selected_slot_index is not None:
+            item_key = inventory.gear_slots[self.selected_slot_index] if self.selected_slot_index < len(inventory.gear_slots) else None
+            has_equipped_item = item_key is not None
+        elif self.selected_slot_type == 'consumable' and hasattr(self.game, 'inventory') and self.selected_slot_index is not None:
+            stack = inventory.consumable_slots[self.selected_slot_index] if self.selected_slot_index < len(inventory.consumable_slots) else None
+            has_equipped_item = stack is not None
+        
+        # Draw unequip button
+        mouse_pos = pygame.mouse.get_pos()
+        is_unequip_hovering = unequip_button_rect.collidepoint(mouse_pos)
+        
+        if has_equipped_item:
+            unequip_color = (180, 80, 60) if is_unequip_hovering else (120, 60, 50)
+        else:
+            unequip_color = (60, 60, 70)  # Disabled
+        
+        pygame.draw.rect(screen, unequip_color, unequip_button_rect, border_radius=6)
+        pygame.draw.rect(screen, (200, 150, 150), unequip_button_rect, width=2 if is_unequip_hovering else 1, border_radius=6)
+        
+        unequip_font = get_font(13, bold=True)
+        unequip_text = unequip_font.render("UNEQUIP", True, (255, 255, 255) if has_equipped_item else (100, 100, 110))
+        screen.blit(unequip_text, unequip_text.get_rect(center=unequip_button_rect.center))
+        
+        if has_equipped_item:
+            self.regions.append({'rect': unequip_button_rect, 'action': 'unequip_slot'})
+        
+        # Scrollable grid area
+        grid_y = unequip_button_rect.bottom + 8
+        grid_height = rect.bottom - grid_y - 10
+        grid_rect = pygame.Rect(rect.x + 10, grid_y, rect.width - 20, grid_height)
+        
+        # Item grid settings - FIT TO COLUMN WIDTH
+        item_spacing = 6
+        available_width = grid_rect.width - 10  # Leave space for scrollbar
+        items_per_row = 3  # Changed from 4 to 3 to fit better
+        item_size = (available_width - (items_per_row - 1) * item_spacing) // items_per_row
+        
+        # Calculate scrolling
+        total_rows = (len(items_to_show) + items_per_row - 1) // items_per_row
+        total_height = total_rows * (item_size + item_spacing)
+        max_scroll = max(0, total_height - grid_height)
+        self.stock_scroll_offset = max(0, min(self.stock_scroll_offset, max_scroll))
+        
+        # Set clipping
+        old_clip = screen.get_clip()
+        screen.set_clip(grid_rect)
+        
+        mouse_pos = pygame.mouse.get_pos()
+        icon_font = get_font(18, bold=True)
+        
+        # Draw items
+        for idx, (key, item) in enumerate(items_to_show):
+            if not item:
+                continue
+            
+            row = idx // items_per_row
+            col = idx % items_per_row
+            
+            item_x = grid_rect.x + col * (item_size + item_spacing)
+            item_y = grid_rect.y + row * (item_size + item_spacing) - self.stock_scroll_offset
+            item_rect = pygame.Rect(item_x, item_y, item_size, item_size)
+            
+            # Skip if not visible
+            if item_rect.bottom < grid_rect.y or item_rect.top > grid_rect.bottom:
+                continue
+            
+            # Check if equipped
+            is_equipped = False
+            if self.selected_slot_type == 'gear':
+                is_equipped = key in inventory.gear_slots
+            else:
+                is_equipped = any(s and s.key == key for s in inventory.consumable_slots)
+            
+            # Draw item
+            pygame.draw.rect(screen, item.color, item_rect.inflate(-8, -8), border_radius=6)
+            border_color = rarity_border_color(item)
+            pygame.draw.rect(screen, border_color, item_rect, width=2, border_radius=8)
+            
+            # Green glow if equipped
+            if is_equipped:
+                pygame.draw.rect(screen, (120, 230, 180), item_rect.inflate(4, 4), width=2, border_radius=10)
+            
+            # Icon
+            icon_surf = None
+            if hasattr(item, 'icon_path') and item.icon_path:
+                surf = _safe_load_icon(item.icon_path, (item_size - 12, item_size - 12))
+                if surf:
+                    icon_surf = surf
+                else:
+                    try:
+                        icon_surf = load_icon_masked(item.icon_path, (item_size - 12, item_size - 12), radius=6)
+                    except Exception:
+                        icon_surf = None
+            if icon_surf:
+                screen.blit(icon_surf, icon_surf.get_rect(center=item_rect.center))
+            else:
+                if hasattr(item, 'icon_letter'):
+                    icon_text = icon_font.render(item.icon_letter, True, (20, 20, 28))
+                    screen.blit(icon_text, icon_text.get_rect(center=item_rect.center))
+            
+            # Show count for consumables
+            if self.selected_slot_type == 'consumable':
+                count = inventory._total_available_count(key)
+                if count > 0:
+                    count_font = get_font(12, bold=True)
+                    count_text = count_font.render(str(count), True, (255, 255, 255))
+                    screen.blit(count_text, count_text.get_rect(bottomright=(item_rect.right - 3, item_rect.bottom - 3)))
+            
+            # Register clickable region for equip/unequip
+            self.regions.append({'rect': item_rect, 'action': 'toggle_equip_item', 'item_key': key})
+        
+        # Restore clip
+        screen.set_clip(old_clip)
+        
+        # Scrollbar if needed
+        if total_height > grid_height:
+            scrollbar_x = rect.right - 12
+            scrollbar_y = grid_rect.y
+            scrollbar_h = grid_rect.height
+            
+            pygame.draw.rect(screen, (60, 60, 80), (scrollbar_x, scrollbar_y, 6, scrollbar_h), border_radius=3)
+            
+            scroll_ratio = self.stock_scroll_offset / max(1, max_scroll)
+            thumb_h = max(20, int((grid_height / total_height) * scrollbar_h))
+            thumb_y = scrollbar_y + int(scroll_ratio * (scrollbar_h - thumb_h))
+            pygame.draw.rect(screen, (150, 150, 170), (scrollbar_x + 1, thumb_y, 4, thumb_h), border_radius=2)
     
     def _draw_player_info_column(self, screen, rect):
-        """Draw right column with player status (like inventory)"""
+        """Draw right column with player status or inventory stock view"""
         # Column background
         pygame.draw.rect(screen, (25, 25, 35), rect, border_radius=10)
         pygame.draw.rect(screen, (100, 100, 120), rect, width=2, border_radius=10)
         
-        # Player model frame - REDUCED HEIGHT
+        # If a slot is selected, show inventory stock view
+        if self.selected_slot_type is not None:
+            self._draw_inventory_stock_view(screen, rect)
+            return
+        
+        # Otherwise, show player model frame - REDUCED HEIGHT
         model_height = 120  # Reduced from 200 to 120
         model_rect = pygame.Rect(rect.x + 10, rect.y + 10, rect.width - 20, model_height)
         pygame.draw.rect(screen, (32, 36, 52), model_rect, border_radius=12)
@@ -1999,44 +2186,66 @@ class Shop:
         # Calculate column bounds (same as in draw method)
         margin = 40
         panel_width = WIDTH - (margin * 2)
+        panel_height = HEIGHT - (margin * 2)
         panel_x = margin
         panel_y = margin
         
         column_margin = 12
         header_height = 60
         content_y = panel_y + header_height + 20
+        content_height = panel_height - header_height - 80  # Leave space for footer
+        
+        # First check if mouse is within the shop panel at all
+        panel_rect = pygame.Rect(panel_x, panel_y, panel_width, panel_height)
+        if not panel_rect.collidepoint(mouse_pos):
+            return False  # Mouse is outside the shop panel entirely
         
         # Left column: Shop items list (40% width)
         left_width = int(panel_width * 0.40)
-        left_rect = pygame.Rect(panel_x + 10, content_y, left_width, 100)  # Height doesn't matter for hover check
+        left_rect = pygame.Rect(panel_x + 10, content_y, left_width, content_height)
         
         # Middle column: Player slots (30% width)
         middle_width = int(panel_width * 0.28)
-        middle_rect = pygame.Rect(left_rect.right + column_margin, content_y, middle_width, 100)
+        middle_rect = pygame.Rect(left_rect.right + column_margin, content_y, middle_width, content_height)
         
         # Right column: Player info (30% width)
         right_width = panel_width - left_width - middle_width - column_margin * 3 - 20
-        right_rect = pygame.Rect(middle_rect.right + column_margin, content_y, right_width, 100)
+        right_rect = pygame.Rect(middle_rect.right + column_margin, content_y, right_width, content_height)
         
-        # Check if mouse is in right column (player info) and scroll that
-        if right_rect.left <= mouse_pos[0] <= right_rect.right:
-            if scroll_direction > 0:
-                # Scroll up
-                self.player_info_scroll_offset -= 22  # One line height
-                self.player_info_scroll_offset = max(0, self.player_info_scroll_offset)
+        # Check if mouse is in right column (player info / stock view) and scroll that
+        if right_rect.collidepoint(mouse_pos):
+            # Check if we're showing the inventory stock view
+            if self.selected_slot_type is not None:
+                # Scroll the inventory stock view
+                scroll_amount = 50  # Pixels to scroll
+                if scroll_direction > 0:
+                    # Scroll up
+                    self.stock_scroll_offset -= scroll_amount
+                    self.stock_scroll_offset = max(0, self.stock_scroll_offset)
+                else:
+                    # Scroll down
+                    self.stock_scroll_offset += scroll_amount
             else:
-                # Scroll down
-                self.player_info_scroll_offset += 22  # One line height
+                # Scroll the player info stats
+                if scroll_direction > 0:
+                    # Scroll up
+                    self.player_info_scroll_offset -= 22  # One line height
+                    self.player_info_scroll_offset = max(0, self.player_info_scroll_offset)
+                else:
+                    # Scroll down
+                    self.player_info_scroll_offset += 22  # One line height
             return True
         
         # Check if mouse is in left column (shop items) and scroll that
-        if left_rect.left <= mouse_pos[0] <= left_rect.right:
+        if left_rect.collidepoint(mouse_pos):
             if scroll_direction > 0:
                 self._scroll_up()
             else:
                 self._scroll_down()
             return True
         
+        # Middle column doesn't have scrolling (just slots)
+        # Also returns False if mouse is in gaps between columns
         return False
     
     def _scroll_up(self):
@@ -2112,6 +2321,113 @@ class Shop:
                         self.purchase_item(selected_item)
                 elif action == 'exit':
                     self.close_shop()
+                elif action == 'select_gear_slot':
+                    # Select gear slot to view inventory
+                    slot_idx = info.get('slot_index')
+                    if slot_idx is not None:
+                        if self.selected_slot_type == 'gear' and self.selected_slot_index == slot_idx:
+                            # Deselect if clicking the same slot
+                            self.selected_slot_type = None
+                            self.selected_slot_index = None
+                        else:
+                            self.selected_slot_type = 'gear'
+                            self.selected_slot_index = slot_idx
+                            self.stock_scroll_offset = 0
+                elif action == 'select_consumable_slot':
+                    # Select consumable slot to view inventory
+                    slot_idx = info.get('slot_index')
+                    if slot_idx is not None:
+                        if self.selected_slot_type == 'consumable' and self.selected_slot_index == slot_idx:
+                            # Deselect if clicking the same slot
+                            self.selected_slot_type = None
+                            self.selected_slot_index = None
+                        else:
+                            self.selected_slot_type = 'consumable'
+                            self.selected_slot_index = slot_idx
+                            self.stock_scroll_offset = 0
+                elif action == 'toggle_equip_item':
+                    # Equip or unequip item from stock view
+                    item_key = info.get('item_key')
+                    if item_key and self.selected_slot_index is not None and hasattr(self.game, 'inventory'):
+                        inventory = self.game.inventory
+                        idx = self.selected_slot_index
+                        
+                        if self.selected_slot_type == 'gear':
+                            inventory._equip_armament(idx, item_key)
+                            # Move selection to next free slot after equipping
+                            if idx < len(inventory.gear_slots) and inventory.gear_slots[idx] is not None:
+                                next_free = None
+                                for offset in range(1, len(inventory.gear_slots)):
+                                    cand = (idx + offset) % len(inventory.gear_slots)
+                                    if inventory.gear_slots[cand] is None:
+                                        next_free = cand
+                                        break
+                                if next_free is not None:
+                                    # Move to next free slot
+                                    self.selected_slot_index = next_free
+                                # If all slots full, selection stays on current slot (no change needed)
+                                
+                        elif self.selected_slot_type == 'consumable':
+                            inventory._equip_consumable(idx, item_key)
+                            # Move selection to next free slot after equipping
+                            if idx < len(inventory.consumable_slots) and inventory.consumable_slots[idx] is not None:
+                                next_free = None
+                                for offset in range(1, len(inventory.consumable_slots)):
+                                    cand = (idx + offset) % len(inventory.consumable_slots)
+                                    if inventory.consumable_slots[cand] is None:
+                                        next_free = cand
+                                        break
+                                if next_free is not None:
+                                    # Move to next free slot
+                                    self.selected_slot_index = next_free
+                                # If all slots full, selection stays on current slot (no change needed)
+                elif action == 'unequip_slot':
+                    # Unequip item from selected slot by directly clearing it
+                    if self.selected_slot_index is not None and hasattr(self.game, 'inventory'):
+                        inventory = self.game.inventory
+                        idx = self.selected_slot_index
+                        
+                        if self.selected_slot_type == 'gear':
+                            # Clear gear slot and recalculate stats
+                            if idx < len(inventory.gear_slots):
+                                inventory.gear_slots[idx] = None
+                                inventory.recalculate_player_stats()
+                                
+                                # Move selection to next equipped slot, or close stock view if all empty
+                                next_equipped = None
+                                for offset in range(1, len(inventory.gear_slots)):
+                                    cand = (idx + offset) % len(inventory.gear_slots)
+                                    if inventory.gear_slots[cand] is not None:
+                                        next_equipped = cand
+                                        break
+                                
+                                if next_equipped is not None:
+                                    # Move to next equipped slot
+                                    self.selected_slot_index = next_equipped
+                                else:
+                                    # All slots empty, close stock view
+                                    self.selected_slot_type = None
+                                    self.selected_slot_index = None
+                                    
+                        elif self.selected_slot_type == 'consumable':
+                            # Unequip consumable slot (returns items to storage)
+                            inventory._unequip_consumable_slot(idx)
+                            
+                            # Move selection to next equipped slot, or close stock view if all empty
+                            next_equipped = None
+                            for offset in range(1, len(inventory.consumable_slots)):
+                                cand = (idx + offset) % len(inventory.consumable_slots)
+                                if inventory.consumable_slots[cand] is not None:
+                                    next_equipped = cand
+                                    break
+                            
+                            if next_equipped is not None:
+                                # Move to next equipped slot
+                                self.selected_slot_index = next_equipped
+                            else:
+                                # All slots empty, close stock view
+                                self.selected_slot_type = None
+                                self.selected_slot_index = None
                 elif action == 'scroll_up_gear':
                     if self.gear_scroll_offset > 0:
                         self.gear_scroll_offset = max(0, self.gear_scroll_offset - 50)
