@@ -1084,7 +1084,9 @@ class Inventory:
                     entry = self.armament_catalog.get(key)
                     if not entry:
                         continue
-                    pygame.draw.rect(stock_surface, entry.color, cell, border_radius=8)
+                    # Draw inner panel (match slot behavior) and inner rarity outline
+                    inner_panel = cell.inflate(-8, -8)
+                    pygame.draw.rect(stock_surface, entry.color, inner_panel, border_radius=6)
                     border_col = (160, 160, 190)
                     if selection and selection.get('kind') in ('gear_pool', 'gear_slot') and selection.get('key') == key:
                         border_col = (255, 210, 120)
@@ -1092,8 +1094,19 @@ class Inventory:
                     equipped_count = self.gear_slots.count(key)
                     if equipped_count > 0:
                         border_col = (120, 230, 180)
+                    # Draw inner rarity outline so stock items show rarity like slots
+                    try:
+                        inner_col = rarity_border_color(entry)
+                    except Exception:
+                        inner_col = (110, 120, 150)
+                    try:
+                        pygame.draw.rect(stock_surface, inner_col, inner_panel.inflate(-2, -2), width=3, border_radius=6)
+                    except Exception:
+                        pass
+                    # Draw the icon centered in the inner panel
+                    inner_rect = inner_panel.inflate(-6, -6)
+                    _draw_icon_in_rect(stock_surface, inner_rect, entry, icon_font, radius=6)
                     pygame.draw.rect(stock_surface, border_col, cell, width=2, border_radius=8)
-                    _draw_icon_in_rect(stock_surface, cell, entry, icon_font, radius=6)
                 elif self.inventory_stock_mode == 'consumable':
                     # Map from body surface to screen coords for hit regions
                     self._register_inventory_region(cell.move(body_rect.topleft), 'consumable_pool', key=key)
@@ -1104,14 +1117,26 @@ class Inventory:
                     entry = self.consumable_catalog.get(key)
                     if not entry:
                         continue
-                    pygame.draw.rect(stock_surface, entry.color, cell, border_radius=8)
+                    # Draw inner panel (match slot behavior) and inner rarity outline
+                    inner_panel = cell.inflate(-8, -8)
+                    pygame.draw.rect(stock_surface, entry.color, inner_panel, border_radius=6)
                     border_col = (160, 160, 190)
                     if selection and selection.get('kind') in ('consumable_pool', 'consumable_slot') and selection.get('key') == key:
                         border_col = (255, 210, 120)
                     elif any(s and s.key == key for s in self.consumable_slots):
                         border_col = (120, 230, 180)
-                    pygame.draw.rect(stock_surface, border_col, cell, width=2, border_radius=8)
-                    _draw_icon_in_rect(stock_surface, cell, entry, icon_font, radius=6)
+                    # Draw inner rarity outline so stock items show rarity like slots
+                    try:
+                        inner_col = rarity_border_color(entry)
+                    except Exception:
+                        inner_col = (110, 120, 150)
+                    try:
+                        pygame.draw.rect(stock_surface, inner_col, inner_panel.inflate(-2, -2), width=3, border_radius=6)
+                    except Exception:
+                        pass
+                    # Draw the icon centered in the inner panel
+                    inner_rect = inner_panel.inflate(-6, -6)
+                    _draw_icon_in_rect(stock_surface, inner_rect, entry, icon_font, radius=6)
                     
                     # Display the count for consumables in stock
                     total_count = self._total_available_count(key)
@@ -1119,6 +1144,7 @@ class Inventory:
                         count_surface = count_font.render(str(total_count), True, (250, 250, 255))
                         count_rect = count_surface.get_rect(bottomright=(cell.right - 4, cell.bottom - 4))
                         stock_surface.blit(count_surface, count_rect)
+                    pygame.draw.rect(stock_surface, border_col, cell, width=2, border_radius=8)
         
 
         
