@@ -1,0 +1,135 @@
+Release v0.7: Documentation Overhaul and System Updates
+
+This release focuses on updating all documentation to reflect the current state
+of the game, including the complete PCG system, enhanced debug tools, and new
+gameplay features.
+
+## Documentation Updates
+
+### guide.txt
+- Updated all F-key cheat bindings (F1-F12) to match current implementation
+- Added F9 (wall jump debug visualization)
+- Added F10 (area overlay for PCG rooms)
+- Updated F11/F12 for PCG door navigation vs legacy boss room teleport
+- Added Z key for camera zoom toggle
+- Added double-tap Space for no-clip + floating mode (requires God Mode)
+- Added Knight Monster (k) enemy to monster list with full stats
+- Updated Wizard class description to include Teleport skill
+- Clarified ASCII legend with PCG vs Legacy mode differences
+- Expanded "New Features" section with current systems:
+  * PCG room-based procedural generation (default mode)
+  * Component-based entity architecture
+  * Physics-based wall jump system
+  * Camera zoom system
+  * Door interaction system with E-key
+  * PCG config file support (config/pcg_config.json)
+
+### README.md
+- Completely restructured project structure to reflect actual codebase:
+  * Added config/ directory with pcg_config.json
+  * Added src/tiles/ tile system modules
+  * Added src/debug/ debug overlay system
+  * Added src/core/input.py for centralized event handling
+  * Updated src/level/ to show PCG modules and preserved legacy_level.py
+  * Added src/systems/area_effects.py and on_hit_effects.py
+  * Added src/ui/hud.py
+  * Added assets/ with consumable/ and armament/ subdirectories
+- Updated all F-key cheat descriptions with detailed functionality
+- Enhanced class descriptions with skill details (parry, teleport, speed boost)
+- Expanded debugger menu features (F5):
+  * PCG/legacy level teleport picker
+  * Area overlay visualization and opacity controls
+  * PCG mode toggle
+  * Enhanced item spawning menu
+- Updated gameplay notes:
+  * Added E-key door interaction
+  * Expanded ASCII legend with tile types (_, @, platform, breakable wall)
+  * Added Knight Monster (k) enemy entry
+- Added Knight Monster to monster list with full behavior description
+- Updated "Key Files" section with InputHandler, tile system, PCG config
+- Enhanced collaboration tips:
+  * Added warning about legacy_level.py preservation (DO NOT MODIFY)
+  * Added PCG config.json workflow
+  * Added mention of tools/pcg_validate.py
+  * Updated commit message examples
+
+### docs/developer_cheat(must read).txt
+- Corrected all F-key bindings with comprehensive descriptions:
+  * F1: God Mode toggle
+  * F2: Refill consumables
+  * F3: Toggle enemy vision rays
+  * F4: Toggle enemy nametags
+  * F5: Open debugger menu (with navigation instructions)
+  * F6: Toggle shop
+  * F7: Add 1000 money
+  * F8: Toggle tile inspector (with detailed feature list)
+  * F9: Toggle wall jump debug visualization (NEW)
+  * F10: Toggle area overlay for PCG (NEW)
+  * F11: Follow door_exit_1 (PCG) / Reserved (Legacy)
+  * F12: Follow door_exit_2 (PCG) / Go to boss room (Legacy)
+  * Z: Toggle camera zoom
+  * Double-tap Space: Toggle no-clip + floating (requires God Mode)
+- Expanded debugger menu features section:
+  * PCG/legacy teleport picker
+  * Area overlay with opacity controls
+  * PCG mode toggle
+  * Complete navigation instructions
+- Added detailed subsections:
+  * Shop System features and behavior
+  * Tile Inspector capabilities
+  * Wall Jump Debug visualization (NEW)
+  * Area Overlay visualization (NEW)
+  * Procedural Generation system overview
+- Updated "Where implemented" section:
+  * Added src/core/input.py as primary input handler
+  * Added src/debug/overlays.py for debug rendering
+  * Updated architecture references
+- Enhanced tips section with 9 practical debugging workflows
+
+## System Improvements Referenced in Docs
+
+### PCG System
+- Room-based procedural generation with level_id and room_code
+- Door system with E-key proximity interaction
+- Area visualization overlay (spawn zones, combat areas, safe zones)
+- Runtime configuration via config/pcg_config.json
+- Seed-based reproducible generation
+
+### Debug Tools
+- F9: Wall jump debug with state visualization
+- F10: Area overlay with adjustable opacity
+- F5: Comprehensive debugger menu with grid navigation
+- F8: Enhanced tile inspector with metadata display
+- Camera zoom system (Z key)
+
+### Physics & Movement
+- Physics-based wall jump system with coyote time
+- Wall slide with controlled descent
+- Double-tap Space for no-clip + floating mode
+- Enhanced air control and momentum preservation
+
+### UI/UX
+- Centralized input handling via InputHandler class
+- E-key door interaction with proximity prompts
+- Camera zoom with visual feedback
+- Enhanced HUD with active cheat indicators
+
+### Architecture
+- Component-based entity system (CombatComponent, PhysicsComponent, VisionComponent)
+- Tile system with TileRegistry, TileType enums, and collision detection
+- Modular debug overlay system
+- Preserved legacy level system for compatibility
+
+## Files Changed
+- guide.txt: Comprehensive update of all controls and features
+- README.md: Complete restructure and modernization
+- docs/developer_cheat(must read).txt: Full rewrite with accurate mappings
+
+## Notes for Developers
+- Legacy level system (src/level/legacy_level.py) is PRESERVED - do not modify
+- PCG is now the default mode; toggle via config/pcg_config.json
+- All documentation now accurately reflects the current codebase as of Nov 2025
+- F-key mappings are now consistent across all documentation files
+
+Version: 0.7
+Date: 2025-11-16

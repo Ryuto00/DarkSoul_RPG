@@ -55,7 +55,8 @@ class TileRegistry:
             ),
             visual=VisualProperties(
                 base_color=(54, 60, 78),
-                border_radius=4
+                border_radius=4,
+                sprite_path="assets/tiles/Wall.png"
             ),
             physics=PhysicalProperties(
                 friction=0.8

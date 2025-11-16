@@ -23,6 +23,7 @@ from config import (
     GREEN,
     WALL_JUMP_COOLDOWN,
     TILE,
+    BACKGROUND_IMAGE_PATH,
 )
 
 from src.core.utils import draw_text, get_font
@@ -172,6 +173,17 @@ class Game:
         # Shop delay callback for level transitions
         self._shop_delay_callback = None
 
+        # Load dungeon background
+        self.bg_tile = None
+        try:
+            self.bg_tile = pygame.image.load(BACKGROUND_IMAGE_PATH).convert()
+            # Force size 64x64
+            self.bg_tile = pygame.transform.scale(self.bg_tile, (64, 64))
+            logger.info(f"Loaded background tile: {BACKGROUND_IMAGE_PATH}")
+        except Exception as e:
+            logger.warning(f"Failed to load background tile {BACKGROUND_IMAGE_PATH}: {e}")
+            logger.info("Using solid color background instead")
+
     def reset_game_state(self):
         """
         Reset game state to initial state (similar to constructor logic).
@@ -225,6 +237,17 @@ class Game:
         
         # Link inventory to player for on-hit effects
         self.player.inventory = self.inventory
+
+        # Reload background tile to ensure consistency
+        self.bg_tile = None
+        try:
+            self.bg_tile = pygame.image.load(BACKGROUND_IMAGE_PATH).convert()
+            # Force size 64x64
+            self.bg_tile = pygame.transform.scale(self.bg_tile, (64, 64))
+            logger.info(f"Reloaded background tile: {BACKGROUND_IMAGE_PATH}")
+        except Exception as e:
+            logger.warning(f"Failed to reload background tile {BACKGROUND_IMAGE_PATH}: {e}")
+            logger.info("Using solid color background instead")
 
     def restart_run(self):
         """
@@ -996,7 +1019,15 @@ class Game:
             return
 
     def draw(self):
-        self.screen.fill(BG)
+        # Draw dungeon background image
+        if self.bg_tile:
+            tile_w = self.bg_tile.get_width()
+            tile_h = self.bg_tile.get_height()
+            for x in range(0, WIDTH, tile_w):
+                for y in range(0, HEIGHT, tile_h):
+                    self.screen.blit(self.bg_tile, (x, y))
+        else:
+            self.screen.fill(BG)
         self.level.draw(self.screen, self.camera)
         for e in self.enemies:
             e.draw(self.screen, self.camera, show_los=self.debug_enemy_rays, show_nametags=self.debug_enemy_nametags)

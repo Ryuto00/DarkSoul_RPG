@@ -3,8 +3,11 @@ WIDTH, HEIGHT = 960, 540
 FPS = 60
 
 # Colors
-BG = (18, 20, 27)
+BG = (18, 20, 27)  # Fallback background color
 TILE_COL = (54, 60, 78)
+
+# Background image
+BACKGROUND_IMAGE_PATH = "assets/background/ds32.png"
 ACCENT = (255, 199, 95)
 RED = (220, 72, 72)
 GREEN = (80, 200, 120)
