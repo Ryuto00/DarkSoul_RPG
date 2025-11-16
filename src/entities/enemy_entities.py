@@ -13,11 +13,11 @@ from config import (
     ATTACK_COOLDOWN, ATTACK_LIFETIME, COMBO_RESET, SWORD_DAMAGE,
     POGO_BOUNCE_VY, ACCENT, GREEN, CYAN, RED, WHITE, IFRAME_BLINK_INTERVAL
 )
-from ..core.utils import los_clear, find_intermediate_visible_point, find_idle_patrol_target
-from .entity_common import Hitbox, DamageNumber, hitboxes, floating, in_vision_cone
-from .player_entity import Player
-from ..ai.enemy_movement import MovementStrategyFactory
-from .components.combat_component import CombatComponent
+from src.core.utils import los_clear, find_intermediate_visible_point, find_idle_patrol_target
+from src.entities.entity_common import Hitbox, DamageNumber, hitboxes, floating, in_vision_cone
+from src.entities.player_entity import Player
+from src.ai.enemy_movement import MovementStrategyFactory
+from src.entities.components.combat_component import CombatComponent
 
 
 class Enemy:
@@ -43,6 +43,7 @@ class Enemy:
         # Status effects
         self.slow_mult = 1.0
         self.slow_remaining = 0
+        self.stunned = 0
         
         # AI state (for enemies that need it)
         self.state = 'idle'
@@ -57,6 +58,8 @@ class Enemy:
         self.terrain_traits = self._get_terrain_traits()
         self.on_ground = False
         self.base_speed = 1.0
+        self.iframes_flash = False
+        self.draw_border_radius = 4
         
         # Physics properties
         self.friction = 0.8
@@ -137,8 +140,22 @@ class Enemy:
         return has_los, in_cone
     
     def handle_status_effects(self):
-        """Handle DOT and slow effects."""
-        # DOT handling (cold feet)
+        """Handle DOT and slow effects including poison, burn, bleed."""
+        # Initialize status effect attributes if not present
+        if not hasattr(self, 'poison_stacks'):
+            self.poison_stacks = 0
+            self.poison_dps = 0.0
+            self.poison_remaining = 0
+        if not hasattr(self, 'burn_dps'):
+            self.burn_dps = 0.0
+            self.burn_remaining = 0
+        if not hasattr(self, 'bleed_dps'):
+            self.bleed_dps = 0.0
+            self.bleed_remaining = 0
+        if not hasattr(self, 'frozen'):
+            self.frozen = False
+        
+        # Original DOT handling (cold feet)
         if getattr(self, 'dot_remaining', 0) > 0:
             per_frame = getattr(self, 'dot_dps', 0) / FPS
             self.dot_accum = getattr(self, 'dot_accum', 0.0) + per_frame
@@ -149,11 +166,48 @@ class Enemy:
                 self.combat.take_damage(dmg)
             self.dot_remaining -= 1
         
+        # Poison damage
+        if getattr(self, 'poison_remaining', 0) > 0:
+            per_frame = getattr(self, 'poison_dps', 0) / FPS
+            self.dot_accum = getattr(self, 'dot_accum', 0.0) + per_frame
+            if self.dot_accum >= 1.0:
+                dmg = int(self.dot_accum)
+                self.dot_accum -= dmg
+                self.combat.take_damage(dmg)
+            self.poison_remaining -= 1
+            if self.poison_remaining <= 0:
+                self.poison_stacks = 0
+                self.poison_dps = 0.0
+        
+        # Burn damage
+        if getattr(self, 'burn_remaining', 0) > 0:
+            per_frame = getattr(self, 'burn_dps', 0) / FPS
+            self.dot_accum = getattr(self, 'dot_accum', 0.0) + per_frame
+            if self.dot_accum >= 1.0:
+                dmg = int(self.dot_accum)
+                self.dot_accum -= dmg
+                self.combat.take_damage(dmg)
+            self.burn_remaining -= 1
+        
+        # Bleed damage
+        if getattr(self, 'bleed_remaining', 0) > 0:
+            per_frame = getattr(self, 'bleed_dps', 0) / FPS
+            self.dot_accum = getattr(self, 'dot_accum', 0.0) + per_frame
+            if self.dot_accum >= 1.0:
+                dmg = int(self.dot_accum)
+                self.dot_accum -= dmg
+                self.combat.take_damage(dmg)
+            self.bleed_remaining -= 1
+        
         # Slow timer
         if getattr(self, 'slow_remaining', 0) > 0:
             self.slow_remaining -= 1
             if self.slow_remaining <= 0:
                 self.slow_mult = 1.0
+        
+        # Clear frozen state if stun expires
+        if getattr(self, 'frozen', False) and getattr(self, 'stunned', 0) <= 0:
+            self.frozen = False
     
     def hit(self, hb: Hitbox, player: Player):
         """Handle being hit by a player attack."""
@@ -341,30 +395,115 @@ class Enemy:
             pygame.draw.line(surf, (255, 255, 0), center, (right_x, right_y), 1)
 
     def draw_telegraph(self, surf, camera, text, color=(255, 80, 80)):
-        """Draw telegraph text above enemy."""
+        from src.core.utils import draw_text
         if text:
-            from src.core.utils import draw_text
             draw_text(surf, text, camera.to_screen((self.rect.centerx-4, self.rect.top-10)), color, size=18, bold=True)
     
+    def get_status_effect_color(self, base_color):
+        """Returns a color modified by current status effects.
+        Priority: frozen/stunned -> blueish, burn -> orange, poison -> green, bleed -> red.
+        Blends multiple effects if present. Also brightens if iframes_flash is set.
+        """
+        def blend(a, b, t):
+            return (int(a[0] * (1.0 - t) + b[0] * t), int(a[1] * (1.0 - t) + b[1] * t), int(a[2] * (1.0 - t) + b[2] * t))
+        col = base_color
+        # Stunned or frozen: apply bluish tint
+        if getattr(self, 'stunned', 0) > 0 or getattr(self, 'frozen', False):
+            col = blend(col, (120, 180, 255), 0.5)
+        # Burn
+        if getattr(self, 'burn_remaining', 0) > 0:
+            col = blend(col, (255, 140, 40), 0.5)
+        # Poison
+        if getattr(self, 'poison_remaining', 0) > 0:
+            blended = blend(col, (80, 200, 80), 0.45)
+            # If base color equals poison tint, brighten green channel to ensure visible change
+            if blended == col:
+                r, g, b = col
+                blended = (r, min(255, g + 40), b)
+            col = blended
+        # Bleed
+        if getattr(self, 'bleed_remaining', 0) > 0:
+            col = blend(col, (200, 80, 80), 0.35)
+        # Invincibility flash
+        if getattr(self, 'iframes_flash', False):
+            # simple brighten
+            col = tuple(min(255, int(c * 1.25)) for c in col)
+        return col
+
+    def draw_status_effects(self, surf, camera):
+        """Draw icons/text indicating active status effects above the enemy."""
+        effects = []
+        if getattr(self, 'stunned', 0) > 0:
+            effects.append(('!', (255, 200, 80)))
+        if getattr(self, 'burn_remaining', 0) > 0:
+            effects.append(('F', (255, 140, 40)))
+        if getattr(self, 'poison_remaining', 0) > 0:
+            effects.append(('P', (120, 220, 120)))
+        if getattr(self, 'bleed_remaining', 0) > 0:
+            effects.append(('B', (200, 80, 80)))
+        if getattr(self, 'slow_remaining', 0) > 0 and getattr(self, 'slow_mult', 1.0) < 1.0:
+            effects.append(('S', (180, 200, 255)))
+        if not effects:
+            return
+        from src.core.utils import draw_text
+        # Draw them left-to-right above enemy
+        x_off = -len(effects) * 8
+        for (txt, col) in effects:
+            pos = camera.to_screen((self.rect.centerx + x_off, self.rect.top - 14))
+            draw_text(surf, txt, pos, col, size=14, bold=True)
+            x_off += 16
+
+    def draw_nametag(self, surf, camera, show_nametags=False):
+        if not show_nametags:
+            return
+        from src.core.utils import draw_text
+        # Name
+        name = getattr(self, 'type', self.__class__.__name__)
+        pos = camera.to_screen((self.rect.centerx-4, self.rect.top - 24))
+        draw_text(surf, name, pos, (220, 240, 255), size=14, bold=True)
+        # HP bar
+        if hasattr(self, 'combat') and hasattr(self.combat, 'hp'):
+            hp = max(0, int(getattr(self.combat, 'hp', 0)))
+            max_hp = max(1, int(getattr(self.combat, 'max_hp', 1)))
+            frac = float(hp) / float(max_hp) if max_hp > 0 else 0.0
+            width = int(36 * frac)
+            from src.core.utils import draw_text
+            left_x = int((self.rect.centerx - 18) - camera.x)
+            top_y = int((self.rect.top - 16) - camera.y)
+            # we need to respect zoom; use to_screen for coordinates then draw rects relative to screen
+            top_left = camera.to_screen((self.rect.centerx - 18, self.rect.top - 16))
+            bg_rect = pygame.Rect(top_left[0], top_left[1], 36, 6)
+            fg_rect = pygame.Rect(top_left[0], top_left[1], width, 6)
+            pygame.draw.rect(surf, (60, 60, 60), bg_rect)
+            pygame.draw.rect(surf, (240, 60, 60), fg_rect)
+
+    def draw(self, surf, camera, show_los=False, show_nametags=False):
+        if not getattr(self, 'combat', None) or not getattr(self.combat, 'alive', True):
+            return
+        # Optional debug: vision cone/LOS
+        self.draw_debug_vision(surf, camera, show_los)
+        # Apply base color and status effect tint
+        base_color = self.get_base_color()
+        status_color = self.get_status_effect_color(base_color)
+        pygame.draw.rect(surf, status_color, camera.to_screen_rect(self.rect), border_radius=getattr(self, 'draw_border_radius', 4))
+        # Draw status effect indicators and telegraph if any
+        self.draw_status_effects(surf, camera)
+        if getattr(self, 'tele_t', 0) > 0 and getattr(self, 'tele_text', ''):
+            from src.core.utils import draw_text
+            draw_text(surf, self.tele_text, camera.to_screen((self.rect.centerx-4, self.rect.top-10)), (255,200,80), size=18, bold=True)
+        # Name and HP
+        self.draw_nametag(surf, camera, show_nametags)
+
     # Methods to be implemented by subclasses
     def tick(self, level, player):
-        """Update enemy state each frame."""
         raise NotImplementedError("Subclasses must implement tick method")
     
-    def draw(self, surf, camera, show_los=False, show_nametags=False):
-        """Draw the enemy."""
-        raise NotImplementedError("Subclasses must implement draw method")
-    
-    def draw_nametag(self, surf, camera, show_nametags=False):
-        """Draw enemy type nametag when debug is enabled."""
-        if show_nametags and self.alive:
-            from src.core.utils import draw_text
-            enemy_type = self.__class__.__name__
-            draw_text(surf, enemy_type,
-                     camera.to_screen((self.rect.centerx, self.rect.top - 20)),
-                     (255, 255, 100), size=14, bold=True)
+    def get_base_color(self) -> tuple[int, int, int]:
+        return (180, 70, 160) if not self.combat.is_invincible() else (120, 40, 100)
+
 
 class Bug(Enemy):
+    """Basic ground enemy with simple patrol behavior."""
     def __init__(self, x, ground_y):
         combat_config = {
             'max_hp': 30,
@@ -396,72 +535,33 @@ class Bug(Enemy):
         
         # Update combat timers (invincibility, etc.)
         self.combat.update()
-        
-        # Handle common status effects
         self.handle_status_effects()
         
-        # Update vision cone and get distance to player
-        ppos = (player.rect.centerx, player.rect.centery)
-        dist_to_player = self.update_vision_cone(ppos)
+        # Simple patrol movement
+        if abs(self.vx) < 0.1:
+            self.vx = random.choice([-1.6, 1.6])
         
-        # Check vision cone and line of sight
-        epos = (self.rect.centerx, self.rect.centery)
-        has_los, in_cone = self.check_vision_cone(level, ppos)
-        
-        # AI state logic based on vision cone
-        if has_los and dist_to_player < self.vision_range:
-            self.state = 'pursue'
-            self.last_seen = ppos
-            self.target = ppos
-        elif in_cone and dist_to_player < self.vision_range:
-            # In cone but no LOS -> search
-            if self.state != 'search' or self.repath_t <= 0:
-                wp = find_intermediate_visible_point(level, epos, ppos)
-                if wp:
-                    self.state = 'search'
-                    self.target = wp
-                    self.repath_t = 15
+        # Move horizontally
+        self.rect.x += int(self.vx)
+        for s in level.solids:
+            if self.rect.colliderect(s):
+                if self.vx > 0:
+                    self.rect.right = s.left
                 else:
-                    # fallback toward last seen
-                    self.state = 'search'
-                    self.target = self.last_seen or ppos
-                    self.repath_t = 15
-            else:
-                self.repath_t -= 1
-        else:
-            # idle and patrol
-            if self.state != 'idle' or self.target is None:
-                self.state = 'idle'
-                self.target = find_idle_patrol_target(level, self.home)
-
-        # Use new movement system
-        context = {
-            'player': player,
-            'has_los': has_los,
-            'distance_to_player': dist_to_player,
-            'level': level
-        }
+                    self.rect.left = s.right
+                self.vx *= -1
         
-        # Handle movement with new system
-        self.handle_movement(level, player)
+        # Update facing direction
+        self.facing = 1 if self.vx > 0 else -1
+        self.facing_angle = 0 if self.facing > 0 else math.pi
         
-        # Apply gravity for ground-based enemies
-        if self.gravity_affected:
-            self.handle_gravity(level)
-            
-        # Handle player collision
-        self.combat.handle_collision_with_player(player)
-
-    def draw(self, surf, camera, show_los=False, show_nametags=False):
-        # Draw debug vision cone and LOS line
-        self.draw_debug_vision(surf, camera, show_los)
-        
-        # Draw the bug
-        col = (180, 70, 160) if not self.combat.is_invincible() else (120, 40, 100)
-        pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=6)
-        
-        # Draw nametag if enabled
-        self.draw_nametag(surf, camera, show_nametags)
+        # Update position tracking
+        self.x = float(self.rect.centerx)
+        self.y = float(self.rect.bottom)
+    
+    def get_base_color(self):
+        """Get the base color for Bug enemy."""
+        return (180, 70, 160) if not self.combat.is_invincible() else (120, 40, 100)
 
 
 class Boss(Enemy):
@@ -479,6 +579,7 @@ class Boss(Enemy):
                         vision_range=300, cone_half_angle=math.pi/3, turn_rate=0.03)
         self.base_speed = 1.2
         self.can_jump = False
+        self.draw_border_radius = 8
     
     def _get_terrain_traits(self):
         """Boss can break through destructible terrain"""
@@ -487,6 +588,10 @@ class Boss(Enemy):
     def _set_movement_strategy(self):
         """Set movement strategy for Boss"""
         self.movement_strategy = MovementStrategyFactory.create_strategy('ground_patrol')
+    
+    def get_base_color(self):
+        """Get the base color for Boss enemy."""
+        return (200, 100, 40) if not self.combat.is_invincible() else (140, 80, 30)
 
     def tick(self, level, player):
         if not self.combat.alive: return
@@ -517,17 +622,6 @@ class Boss(Enemy):
         # would need to be passed into the component's config to be fully replicated.
         # For now, we use the component's default collision handling.
         self.combat.handle_collision_with_player(player)
-
-    def draw(self, surf, camera, show_los=False, show_nametags=False):
-        # Draw debug vision cone and LOS line
-        self.draw_debug_vision(surf, camera, show_los)
-        
-        # Draw the boss
-        col = (200, 100, 40) if not self.combat.is_invincible() else (140, 80, 30)
-        pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=8)
-        
-        # Draw nametag if enabled
-        self.draw_nametag(surf, camera, show_nametags)
 
 
 # --- New Enemy Types ---
@@ -619,20 +713,7 @@ class Frog(Enemy):
         self.x = float(self.rect.centerx)
         self.y = float(self.rect.bottom)
 
-    def draw(self, surf, camera, show_los=False, show_nametags=False):
-        if not self.combat.alive: return
-        
-        self.draw_debug_vision(surf, camera, show_los)
-        
-        col = (80, 200, 80) if not self.combat.is_invincible() else (60, 120, 60)
-        pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=5)
-        
-        if getattr(self, 'tele_t', 0) > 0 and getattr(self, 'tele_text',''):
-            from src.core.utils import draw_text
-            rx, ry = self.rect.centerx, self.rect.top - 10
-            draw_text(surf, self.tele_text, camera.to_screen((rx-4, ry)), (255,80,80), size=18, bold=True)
-        
-        self.draw_nametag(surf, camera, show_nametags)
+
 
 
 class Archer(Enemy):
@@ -699,11 +780,22 @@ class Archer(Enemy):
         self.x = float(self.rect.centerx)
         self.y = float(self.rect.bottom)
 
+    def get_base_color(self):
+        """Get the base color for Archer enemy."""
+        return (200, 200, 80) if not self.combat.is_invincible() else (120, 120, 60)
+    
     def draw(self, surf, camera, show_los=False, show_nametags=False):
         if not self.combat.alive: return
         
-        col = (200, 200, 80) if not self.combat.is_invincible() else (120, 120, 60)
-        pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=5)
+        self.draw_debug_vision(surf, camera, show_los)
+        
+        # Draw archer with status effect coloring
+        base_color = self.get_base_color()
+        status_color = self.get_status_effect_color(base_color)
+        pygame.draw.rect(surf, status_color, camera.to_screen_rect(self.rect), border_radius=5)
+        
+        # Draw status effect indicators
+        self.draw_status_effects(surf, camera)
         
         if getattr(self, 'tele_t', 0) > 0 and getattr(self, 'tele_text',''):
             from src.core.utils import draw_text
@@ -792,19 +884,9 @@ class WizardCaster(Enemy):
         self.x = float(self.rect.centerx)
         self.y = float(self.rect.centery)
 
-    def draw(self, surf, camera, show_los=False, show_nametags=False):
-        if not self.combat.alive: return
-        
-        self.draw_debug_vision(surf, camera, show_los)
-        
-        col = (180, 120, 220) if not self.combat.is_invincible() else (110, 80, 140)
-        pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=5)
-        
-        if getattr(self, 'tele_t', 0) > 0 and getattr(self, 'tele_text',''):
-            from src.core.utils import draw_text
-            draw_text(surf, self.tele_text, camera.to_screen((self.rect.centerx-4, self.rect.top-10)), (255,200,80), size=18, bold=True)
-        
-        self.draw_nametag(surf, camera, show_nametags)
+    def get_base_color(self):
+        """Get the base color for WizardCaster enemy."""
+        return (180, 120, 220) if not self.combat.is_invincible() else (110, 80, 140)
 
 
 class Assassin(Enemy):
@@ -972,19 +1054,13 @@ class Assassin(Enemy):
         self.x = float(self.rect.centerx)
         self.y = float(self.rect.bottom)
 
-    def draw(self, surf, camera, show_los=False, show_nametags=False):
-        if not self.combat.alive: return
-        
-        self.draw_debug_vision(surf, camera, show_los)
-        
+    def get_base_color(self):
+        """Get the base color for Assassin enemy."""
         in_cone = getattr(self, '_in_cone', False)
         if in_cone:
-            col = (60,60,80) if not self.combat.is_invincible() else (40,40,60)
+            return (60,60,80) if not self.combat.is_invincible() else (40,40,60)
         else:
-            col = (30,30,40) if not self.combat.is_invincible() else (20,20,30)
-        pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=5)
-        
-        self.draw_nametag(surf, camera, show_nametags)
+            return (30,30,40) if not self.combat.is_invincible() else (20,20,30)
 
 
 class Bee(Enemy):
@@ -1055,18 +1131,9 @@ class Bee(Enemy):
         self.x = float(self.rect.centerx)
         self.y = float(self.rect.centery)
 
-    def draw(self, surf, camera, show_los=False, show_nametags=False):
-        if not self.combat.alive: return
-        
-        self.draw_debug_vision(surf, camera, show_los)
-
-        col = (240, 180, 60) if not self.combat.is_invincible() else (140, 120, 50)
-        pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=5)
-        if getattr(self, 'tele_t', 0) > 0 and getattr(self, 'tele_text',''):
-            from src.core.utils import draw_text
-            draw_text(surf, self.tele_text, camera.to_screen((self.rect.centerx-4, self.rect.top-10)), (255,100,80), size=18, bold=True)
-        
-        self.draw_nametag(surf, camera, show_nametags)
+    def get_base_color(self):
+        """Get the base color for Frog enemy."""
+        return (80, 200, 80) if not self.combat.is_invincible() else (60, 120, 60)
 
 
 class Golem(Enemy):
@@ -1161,15 +1228,6 @@ class Golem(Enemy):
 
         self.combat.handle_collision_with_player(player)
 
-    def draw(self, surf, camera, show_los=False, show_nametags=False):
-        if not self.combat.alive: return
-        
-        self.draw_debug_vision(surf, camera, show_los)
-
-        col = (140, 140, 160) if not self.combat.is_invincible() else (100, 100, 120)
-        pygame.draw.rect(surf, col, camera.to_screen_rect(self.rect), border_radius=7)
-        if getattr(self, 'tele_t', 0) > 0 and getattr(self, 'tele_text',''):
-            from src.core.utils import draw_text
-            draw_text(surf, self.tele_text, camera.to_screen((self.rect.centerx-6, self.rect.top-12)), (255,120,90), size=22, bold=True)
-        
-        self.draw_nametag(surf, camera, show_nametags)
+    def get_base_color(self):
+        """Get the base color for Bee enemy."""
+        return (240, 180, 60) if not self.combat.is_invincible() else (140, 120, 50)

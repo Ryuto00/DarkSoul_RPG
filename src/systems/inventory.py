@@ -659,6 +659,12 @@ class Inventory:
                 payload['lines'] = ["Unknown Consumable"]
                 return payload
             lines = entry.tooltip_lines()
+            # Insert rarity as the second line for consistency with shop tooltips
+            try:
+                rarity = getattr(entry, 'rarity', 'Normal')
+                lines.insert(1, f"Rarity: {rarity}")
+            except Exception:
+                pass
             if stack_count is not None:
                 lines.append(f"Stack: {stack_count}")
             storage_count = self._storage_count(key)
@@ -705,6 +711,17 @@ class Inventory:
             tooltip_rect.y = HEIGHT - height - 8
         pygame.draw.rect(self.game.screen, (28, 28, 38), tooltip_rect, border_radius=8)
         pygame.draw.rect(self.game.screen, (180, 170, 200), tooltip_rect, width=1, border_radius=8)
+
+        # Draw rarity border accent around tooltip if we have an item
+        try:
+            item_obj = payload.get('item')
+            if item_obj:
+                border_col = rarity_border_color(item_obj)
+                inner = tooltip_rect.inflate(-4, -4)
+                pygame.draw.rect(self.game.screen, border_col, inner, width=2, border_radius=6)
+        except Exception:
+            pass
+
         text_x = tooltip_rect.x + 10
         if icon_space:
             icon_rect = pygame.Rect(tooltip_rect.x + 10, tooltip_rect.y + 10, 24, 24)
@@ -1716,3 +1733,10 @@ class Inventory:
             player._stamina_regen = stats.get('stamina_regen', player._stamina_regen)
         if hasattr(player, '_mana_regen'):
             player._mana_regen = stats.get('mana_regen', player._mana_regen)
+        
+        # Clear on-hit effects cache when equipment changes
+        try:
+            from systems.on_hit_effects import clear_on_hit_cache
+            clear_on_hit_cache()
+        except Exception:
+            pass  # Fail silently if on-hit effects system has issues

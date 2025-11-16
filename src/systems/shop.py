@@ -58,7 +58,7 @@ class Shop:
         # Track which equipment has been purchased this shop visit
         self.purchased_equipment = set()  # {item_key}
         
-        # New shop inventory with 5 gear slots and 3 consumable slots
+        # New shop inventory with 5 gear slots and 3 consumables
         self.selected_gear = []  # 5 items
         self.selected_consumables = []  # 3 items
         
@@ -82,9 +82,19 @@ class Shop:
         self.selected_slot_type = None  # 'gear' or 'consumable'
         self.selected_slot_index = None  # Which slot (0-2)
         self.stock_scroll_offset = 0  # Scroll offset for stock view
+
+        # Persisted rects for robust input handling
+        self.panel_rect = None
+        self.left_rect = None
+        self.middle_rect = None
+        self.right_rect = None
+        self.left_grid_rect = None
+        self.right_stock_grid_rect = None
+        self.right_stats_area_rect = None
         
         # Create initial inventory
         self.refresh_inventory()
+
     
     def _get_max_visible(self):
         """Get max visible items for current category"""
@@ -518,6 +528,14 @@ class Shop:
         lines = item.tooltip_lines()
         if not lines:
             return
+        # Insert rarity line after the name so the tooltip shows item rarity
+        try:
+            rarity = getattr(item, 'rarity', 'Normal')
+            rarity_line = f"Rarity: {rarity}"
+            # Insert as second line (after name)
+            lines.insert(1, rarity_line)
+        except Exception:
+            pass
 
         # Add stock and ownership information for consumables
         if hasattr(item, 'use'):  # Consumable
@@ -578,6 +596,15 @@ class Shop:
         # Draw tooltip background
         pygame.draw.rect(screen, (28, 28, 38), tooltip_rect, border_radius=8)
         pygame.draw.rect(screen, (180, 170, 200), tooltip_rect, width=1, border_radius=8)
+
+        # Draw rarity border accent around tooltip
+        try:
+            border_col = rarity_border_color(item)
+            # Draw a thin accent border inset so it doesn't overlap the outer border
+            inner = tooltip_rect.inflate(-4, -4)
+            pygame.draw.rect(screen, border_col, inner, width=2, border_radius=6)
+        except Exception:
+            pass
 
         # Draw icon
         icon_rect = pygame.Rect(tooltip_rect.x + 10, tooltip_rect.y + 10, 24, 24)
@@ -684,11 +711,22 @@ class Shop:
         # Right column: Player status (30% width)
         right_width = panel_width - left_width - middle_width - column_margin * 3 - 20
         right_rect = pygame.Rect(middle_rect.right + column_margin, content_y, right_width, content_height)
-        
+
+        # Persist column rects - used for hit testing in input handling and scrolling
+        try:
+            self.panel_rect = panel_rect
+            self.left_rect = left_rect
+            self.middle_rect = middle_rect
+            self.right_rect = right_rect
+        except Exception:
+            pass
+
         # Draw columns
         self._draw_shop_items_column(screen, left_rect)
         self._draw_player_slots_column(screen, middle_rect)
         self._draw_player_info_column(screen, right_rect)
+
+
         
         # Footer area - Coin box and Exit button
         # Exit button back in center
@@ -769,6 +807,10 @@ class Shop:
         # obscured by the outer panel border). 16 px provides a consistent
         # inner margin that matches other column spacing.
         grid_rect = pygame.Rect(rect.x + 16, grid_y, rect.width - 32, grid_height)
+        try:
+            self.left_grid_rect = grid_rect
+        except Exception:
+            self.left_grid_rect = None
 
         # List layout (single column list with category headers)
         item_h = 64
@@ -1139,7 +1181,7 @@ class Shop:
                 screen.blit(num_text, num_text.get_rect(center=slot_rect.center))
 
             # Register clickable region for slot selection
-            self.regions.append({'rect': slot_rect, 'action': 'select_gear_slot', 'slot_index': i})
+            self.regions.append({'rect': slot_rect, 'action': 'select_gear_slot', 'slot_index': i, 'item': item})
 
         # Consumables header (placed under armament row)
         cons_header_rect = pygame.Rect(rect.x + 4, arm_row_y + slot_size + 12, rect.width - 8, header_height)
@@ -1215,7 +1257,7 @@ class Shop:
                 screen.blit(hotkey_text, hotkey_text.get_rect(center=slot_rect.center))
 
             # Register clickable region for slot selection
-            self.regions.append({'rect': slot_rect, 'action': 'select_consumable_slot', 'slot_index': i})
+            self.regions.append({'rect': slot_rect, 'action': 'select_consumable_slot', 'slot_index': i, 'item': item})
     
     def _draw_inventory_stock_view(self, screen, rect):
         """Draw inventory stock view when a slot is selected (like in inventory system)"""
@@ -1286,6 +1328,10 @@ class Shop:
         grid_y = unequip_button_rect.bottom + 8
         grid_height = rect.bottom - grid_y - 10
         grid_rect = pygame.Rect(rect.x + 10, grid_y, rect.width - 20, grid_height)
+        try:
+            self.right_stock_grid_rect = grid_rect
+        except Exception:
+            self.right_stock_grid_rect = None
         
         # Item grid settings - FIT TO COLUMN WIDTH
         item_spacing = 6
@@ -1365,7 +1411,7 @@ class Shop:
                     screen.blit(count_text, count_text.get_rect(bottomright=(item_rect.right - 3, item_rect.bottom - 3)))
             
             # Register clickable region for equip/unequip
-            self.regions.append({'rect': item_rect, 'action': 'toggle_equip_item', 'item_key': key})
+            self.regions.append({'rect': item_rect, 'action': 'toggle_equip_item', 'item_key': key, 'item': item})
         
         # Restore clip
         screen.set_clip(old_clip)
@@ -1424,6 +1470,10 @@ class Shop:
         stats_area_y = stats_header_rect.bottom + 8
         stats_area_height = rect.bottom - stats_area_y - 10
         stats_area_rect = pygame.Rect(rect.x + 10, stats_area_y, rect.width - 20, stats_area_height)
+        try:
+            self.right_stats_area_rect = stats_area_rect
+        except Exception:
+            self.right_stats_area_rect = None
         
         stats_font = get_font(14)  # Reduced from 16 to 14
         line_height = 22  # Reduced from 24 to 22
@@ -1680,6 +1730,13 @@ class Shop:
             screen.blit(slot_text, (item_rect.x + 3, item_rect.y + 3))
             
             # Clickable region removed - no swap popup functionality
+            # Register hover-only region so tooltips show for equipped gear
+            if i < len(inventory.gear_slots) and inventory.gear_slots[i]:
+                item_key = inventory.gear_slots[i]
+                hover_item = inventory.armament_catalog.get(item_key)
+            else:
+                hover_item = None
+            self.regions.append({'rect': item_rect, 'item': hover_item})
     
     def _draw_player_consumable_slots_cell(self, screen, rect):
         """Draw player consumable slots cell (display only)"""
@@ -1750,6 +1807,11 @@ class Shop:
             
             # Register clickable region
             # Clickable region removed - no swap popup functionality
+            # Add hover-only region for tooltips on equipped consumables
+            hover_item = None
+            if stack:
+                hover_item = inventory.consumable_catalog.get(stack.key)
+            self.regions.append({'rect': item_rect, 'item': hover_item})
     
     def _draw_dynamic_inventory_panel(self, screen, rect):
         """Draw dynamic inventory panel that changes based on selection"""
@@ -2245,48 +2307,110 @@ class Shop:
         right_width = panel_width - left_width - middle_width - column_margin * 3 - 20
         right_rect = pygame.Rect(middle_rect.right + column_margin, content_y, right_width, content_height)
 
-        # Use horizontal x coordinate to determine which column should receive the scroll
-        mx, my = mouse_pos
-
-        # If mouse is over right column area (by X coordinate)
-        if mx >= right_rect.x and mx <= right_rect.right:
-            # Scroll the stock view or player info depending on selection
-            if self.selected_slot_type is not None:
-                scroll_amount = 50  # Pixels to scroll
+        # If we have persisted grid rectangles from drawing code, check those first
+        # They are more accurate and guarantee consistency with what is drawn to screen.
+        try:
+            # Right stock grid
+            if hasattr(self, 'right_stock_grid_rect') and self.right_stock_grid_rect and self.right_stock_grid_rect.collidepoint(mouse_pos):
+                # Scroll the inventory stock view
+                scroll_amount = 50
                 if scroll_direction > 0:
                     self.stock_scroll_offset = max(0, self.stock_scroll_offset - scroll_amount)
                 else:
                     self.stock_scroll_offset += scroll_amount
-            else:
+                return True
+
+            # Right stats area
+            if hasattr(self, 'right_stats_area_rect') and self.right_stats_area_rect and self.right_stats_area_rect.collidepoint(mouse_pos):
                 if scroll_direction > 0:
                     self.player_info_scroll_offset = max(0, self.player_info_scroll_offset - 22)
                 else:
                     self.player_info_scroll_offset += 22
-            return True
+                return True
 
-        # If mouse is over middle column area (by X coordinate) - don't scroll anything
-        if mx >= middle_rect.x and mx <= middle_rect.right:
-            return True  # Prevent left column from handling the scroll
+            # Middle rect (slots) - consume so left pane doesn't receive wheel events while cursor in this column
+            if hasattr(self, 'middle_rect') and self.middle_rect and self.middle_rect.collidepoint(mouse_pos):
+                return True
 
-        # If mouse is over left column area (by X coordinate)
-        if mx >= left_rect.x and mx <= left_rect.right:
-            # Further restrict to the actual scrollable area (exclude header and buy button area)
-            header_h = 36
-            buy_button_height = 36
-            bottom_padding = 18
-
-            scrollable_y = left_rect.y + header_h + 8
-            scrollable_height = left_rect.height - header_h - buy_button_height - bottom_padding - 8
-            scrollable_rect = pygame.Rect(left_rect.x, scrollable_y, left_rect.width, scrollable_height)
-
-            if scrollable_rect.collidepoint(mouse_pos):
+            # Left grid - scroll if within left grid
+            if hasattr(self, 'left_grid_rect') and self.left_grid_rect and self.left_grid_rect.collidepoint(mouse_pos):
                 if scroll_direction > 0:
                     self._scroll_up()
                 else:
                     self._scroll_down()
                 return True
-            else:
+        except Exception:
+            # Fall back to recompute approach below if persisted rects are not available
+            pass
+
+        # No persisted rects or persisted rects didn't match: fall back
+        # Use horizontal x coordinate to determine which column should receive the scroll
+        mx, my = mouse_pos
+
+        # Check Right column scrollable areas first (to avoid left column capturing events)
+        if right_rect.collidepoint(mouse_pos):
+            # If stock view is open (selected_slot_type set), compute the stock grid rect and only scroll if over grid
+            if self.selected_slot_type is not None:
+                # Compute unequip button and grid area exactly like _draw_inventory_stock_view
+                header_height = 50
+                unequip_button_height = 36
+                unequip_button_y = right_rect.y + header_height + 8
+                grid_y = unequip_button_y + unequip_button_height + 8
+                grid_height = right_rect.bottom - grid_y - 10
+                grid_rect = pygame.Rect(right_rect.x + 10, grid_y, right_rect.width - 20, max(0, grid_height))
+
+                if grid_rect.collidepoint(mouse_pos):
+                    scroll_amount = 50  # Pixel scroll
+                    if scroll_direction > 0:
+                        self.stock_scroll_offset = max(0, self.stock_scroll_offset - scroll_amount)
+                    else:
+                        self.stock_scroll_offset += scroll_amount
+                    return True
+                # If mouse is in right column but not over the stock grid area, prevent other scrolling
                 return True
+            else:
+                # Compute the player stats area
+                model_height = 120
+                model_rect = pygame.Rect(right_rect.x + 10, right_rect.y + 10, right_rect.width - 20, model_height)
+                stats_header_y = model_rect.bottom + 10
+                stats_header_height = 30
+                stats_area_y = stats_header_y + stats_header_height + 8
+                stats_area_height = right_rect.bottom - stats_area_y - 10
+                stats_area_rect = pygame.Rect(right_rect.x + 10, stats_area_y, right_rect.width - 20, max(0, stats_area_height))
+
+                if stats_area_rect.collidepoint(mouse_pos):
+                    # Scroll player info stats by line height
+                    if scroll_direction > 0:
+                        self.player_info_scroll_offset = max(0, self.player_info_scroll_offset - 22)  # line height
+                    else:
+                        self.player_info_scroll_offset += 22
+                    return True
+                # Mouse in right column but not over stats area -> consume event to prevent left scroll
+                return True
+
+        # If mouse is over middle column area -> consume but don't scroll
+        if middle_rect.collidepoint(mouse_pos):
+            return True
+
+        # If mouse is over left column area (shop items) -> check the actual scrollable grid rectangle
+        if left_rect.collidepoint(mouse_pos):
+            header_h = 36
+            buy_button_height = 36
+            bottom_padding = 18
+
+            grid_y = left_rect.y + header_h + 8
+            grid_height = left_rect.height - header_h - buy_button_height - bottom_padding - 8
+            grid_rect = pygame.Rect(left_rect.x + 16, grid_y, left_rect.width - 32, max(0, grid_height))
+
+            # Only scroll if mouse is actually within the scrollable list area (not header/buy button)
+            if grid_rect.collidepoint(mouse_pos):
+                if scroll_direction > 0:
+                    self._scroll_up()
+                else:
+                    self._scroll_down()
+                return True
+            # Mouse over left column but not in scrollable grid: consume event to prevent other lists from scrolling
+            return True
 
         # Mouse is in gaps between columns or outside content area
         return False

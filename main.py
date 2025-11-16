@@ -783,6 +783,14 @@ class Game:
                 for e in self.enemies:
                     if getattr(e, 'alive', False) and hb.rect.colliderect(e.rect):
                         e.hit(hb, self.player)
+                        
+                        # Apply on-hit effects from player augmentations
+                        try:
+                            from systems.on_hit_effects import process_on_hit_effects
+                            process_on_hit_effects(e, self.player, hb)
+                        except Exception:
+                            pass  # Fail silently if on-hit effects system has issues
+                        
                         # moving projectiles should disappear after first enemy hit unless they can pierce
                         if getattr(hb, 'vx', 0) or getattr(hb, 'vy', 0):
                             if not getattr(hb, 'pierce', False):
