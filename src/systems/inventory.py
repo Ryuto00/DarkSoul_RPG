@@ -1366,23 +1366,18 @@ class Inventory:
         """Draw the consumable hotbar in the HUD."""
         if not self.consumable_slots:
             return
-        slot_size = 46
+        slot_size = 56  # Increased from 46 to 56
         slot_area_height = slot_size + 18
         spacing = 12
         count = len(self.consumable_slots)
         total_w = slot_size * count + spacing * (count - 1)
         start_x = WIDTH - total_w - 20
         start_y = HEIGHT - slot_area_height - 24
-        title_font = get_font(18, bold=True)
-        title_surface = title_font.render("Consumables (4 / 5 / 6)", True, (215, 210, 220))
-        self.game.screen.blit(title_surface, (start_x, start_y - 24))
         name_font = get_font(12)
         count_font = get_font(16, bold=True)
         for idx, stack in enumerate(self.consumable_slots):
             rect = pygame.Rect(start_x + idx * (slot_size + spacing), start_y, slot_size, slot_size)
             pygame.draw.rect(self.game.screen, (40, 40, 50), rect, border_radius=8)
-            key_label = self._hotkey_label(idx)
-            draw_text(self.game.screen, key_label, (rect.x + 4, rect.y + 4), (200, 200, 210), size=14, bold=True)
             inner = rect.inflate(-10, -10)
             entry = self.consumable_catalog.get(stack.key) if stack else None
             # Use rarity-based border color for items
@@ -1418,11 +1413,10 @@ class Inventory:
                     count_surface = count_font.render(str(total_count), True, (250, 250, 255))
                     count_rect = count_surface.get_rect(bottomright=(rect.right - 4, rect.bottom - 4))
                     self.game.screen.blit(count_surface, count_rect)
-            name = entry.name if entry else "Empty"
-            trimmed = self._shorten_text(name, name_font, slot_size + 8)
-            name_surface = name_font.render(trimmed, True, (220, 220, 230))
-            name_rect = name_surface.get_rect(center=(rect.centerx, rect.bottom + 8))
-            self.game.screen.blit(name_surface, name_rect)
+            
+            # Draw key number in top-left corner LAST (so it's on top of everything)
+            key_label = self._hotkey_label(idx)
+            draw_text(self.game.screen, key_label, (rect.x + 5, rect.y + 4), (220, 230, 255), size=13, bold=True)
 
     def _hotkey_label(self, idx):
         """Get display label for a hotkey index."""

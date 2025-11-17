@@ -133,6 +133,32 @@ def draw_hud(game, screen: pygame.Surface) -> None:
         if getattr(game.player, 'dash_stamina_mult', 1.0) < 0.95:
             active_mods.append(('💨', (100, 255, 200), f"-{int((1.0 - game.player.dash_stamina_mult) * 100)}% DASH"))
         
+        # Consumable timers - moved to top left
+        if getattr(game.player, 'speed_potion_timer', 0) > 0:
+            secs = max(0, int(game.player.speed_potion_timer / FPS))
+            active_mods.append(('⚡', (255, 220, 140), f"Haste {secs}s"))
+        if getattr(game.player, 'jump_boost_timer', 0) > 0:
+            secs = max(0, int(game.player.jump_boost_timer / FPS))
+            active_mods.append(('☁', (200, 220, 255), f"Skybound {secs}s"))
+        if getattr(game.player, 'stamina_boost_timer', 0) > 0:
+            secs = max(0, int(game.player.stamina_boost_timer / FPS))
+            active_mods.append(('💪', (150, 255, 180), f"Cavern Brew {secs}s"))
+        if getattr(game.player, 'lucky_charm_timer', 0) > 0:
+            secs = max(0, int(game.player.lucky_charm_timer / FPS))
+            active_mods.append(('🍀', (255, 215, 0), f"Lucky! {secs}s"))
+        
+        # Phoenix Feather - in the modifiers section with pulsing effect
+        if getattr(game.player, 'phoenix_feather_active', False):
+            import math
+            pulse = abs(math.sin(pygame.time.get_ticks() * 0.003)) * 0.4 + 0.6
+            color = (int(255 * pulse), int(180 * pulse), int(80 * pulse))
+            active_mods.append(('✦', color, "Phoenix Blessing"))
+        
+        # Time crystal effect
+        time_crystal_active = any(getattr(e, 'slow_remaining', 0) > 0 for e in game.enemies if getattr(e, 'alive', False))
+        if time_crystal_active:
+            active_mods.append(('⏱', (150, 150, 255), "Time Distorted"))
+        
         if active_mods:
             mod_y = y
             for icon, color, text in active_mods:
@@ -144,9 +170,9 @@ def draw_hud(game, screen: pygame.Surface) -> None:
         draw_text(screen, f"Class: {getattr(game.player, 'cls', 'Unknown')}", (WIDTH - 220, 28), (200, 200, 200), size=16)
         draw_text(screen, f"Coins: {game.player.money}", (WIDTH - 220, 48), (255, 215, 0), bold=True)
 
-        # Skill bar (3 slots)
-        sbx, sby = 16, HEIGHT - 80
-        slot_w, slot_h = 46, 46
+        # Skill bar (3 slots) - increased size
+        sbx, sby = 16, HEIGHT - 90
+        slot_w, slot_h = 56, 56
         if game.player.cls == 'Knight':
             names = ['Shield', 'Power', 'Charge']
             actives = [getattr(game.player.combat, 'shield_timer', 0) > 0, getattr(game.player.combat, 'power_timer', 0) > 0, False]
@@ -183,38 +209,6 @@ def draw_hud(game, screen: pygame.Surface) -> None:
             game.inventory.draw_consumable_hotbar()
         except Exception:
             logger.exception("Inventory hotbar draw failed")
-
-        # Timed status texts (speed, jump boost etc.)
-        if getattr(game.player, 'speed_potion_timer', 0) > 0:
-            secs = max(0, int(game.player.speed_potion_timer / FPS))
-            draw_text(screen, f"Haste {secs}s", (WIDTH - 180, HEIGHT - 120), (255, 220, 140), size=16, bold=True)
-        if getattr(game.player, 'jump_boost_timer', 0) > 0:
-            secs = max(0, int(game.player.jump_boost_timer / FPS))
-            draw_text(screen, f"Skybound {secs}s", (WIDTH - 180, HEIGHT - 140), (200, 220, 255), size=16, bold=True)
-        if getattr(game.player, 'stamina_boost_timer', 0) > 0:
-            secs = max(0, int(game.player.stamina_boost_timer / FPS))
-            draw_text(screen, f"Cavern Brew {secs}s", (WIDTH - 180, HEIGHT - 160), (150, 255, 180), size=16, bold=True)
-
-        # Other special labels
-        if getattr(game.player, 'lucky_charm_timer', 0) > 0:
-            secs = max(0, int(game.player.lucky_charm_timer / FPS))
-            draw_text(screen, f"Lucky! {secs}s", (WIDTH - 180, HEIGHT - 180), (255, 215, 0), size=16, bold=True)
-        
-        # Phoenix Feather - enhanced display with pulsing effect
-        if getattr(game.player, 'phoenix_feather_active', False):
-            import math
-            # Pulsing color effect to make it more noticeable
-            pulse = abs(math.sin(pygame.time.get_ticks() * 0.003)) * 0.4 + 0.6
-            color = (int(255 * pulse), int(150 * pulse), int(50 * pulse))
-            
-            # Draw with icon-like symbol and larger text
-            draw_text(screen, "✦ PHOENIX BLESSING ✦", (WIDTH - 220, HEIGHT - 200), color, size=18, bold=True)
-            draw_text(screen, "Auto-revive ready!", (WIDTH - 220, HEIGHT - 180), (255, 200, 150), size=14, bold=False)
-
-        # Time crystal enemy effect
-        time_crystal_active = any(getattr(e, 'slow_remaining', 0) > 0 for e in game.enemies if getattr(e, 'alive', False))
-        if time_crystal_active:
-            draw_text(screen, "Time Distorted", (WIDTH - 180, HEIGHT - 220), (150, 150, 255), size=16, bold=True)
 
         # Gameplay hint text
         draw_text(screen,
