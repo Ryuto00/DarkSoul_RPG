@@ -2349,6 +2349,114 @@ class KnightMonster(Enemy):
         # Pathfinding for reaching platforms
         self.path_to_target = []  # List of waypoints to follow
         self.pathfinding_cooldown = 0  # Cooldown before recalculating path
+        
+        # ----------------------------
+        # Load Knight-Monster Sprite Animations
+        # ----------------------------
+        from src.entities.animation_system import AnimationManager, AnimationState
+        self.anim_manager = AnimationManager(self, default_state=AnimationState.IDLE)
+        self.anim_manager.set_sprite_offset_y(-2)
+        
+        # Sprite size (knight-monster sprites)
+        sprite_size = (56, 56)
+        
+        # Load idle animation (4 frames)
+        self.anim_manager.load_animation(
+            AnimationState.IDLE,
+            [
+                "assets/enemy/knight-monster/idle-knight-enemy/Idle-1.png",
+                "assets/enemy/knight-monster/idle-knight-enemy/Idle-2.png",
+                "assets/enemy/knight-monster/idle-knight-enemy/Idle-3.png",
+                "assets/enemy/knight-monster/idle-knight-enemy/Idle-4.png"
+            ],
+            sprite_size=sprite_size,
+            frame_duration=8,
+            loop=True,
+            priority=0
+        )
+        
+        # Load run animation (8 frames)
+        self.anim_manager.load_animation(
+            AnimationState.RUN,
+            [
+                "assets/enemy/knight-monster/run/run-1.png",
+                "assets/enemy/knight-monster/run/run-2.png",
+                "assets/enemy/knight-monster/run/run-3.png",
+                "assets/enemy/knight-monster/run/run-4.png",
+                "assets/enemy/knight-monster/run/run-5.png",
+                "assets/enemy/knight-monster/run/run-6.png",
+                "assets/enemy/knight-monster/run/run-7.png",
+                "assets/enemy/knight-monster/run/run-8.png"
+            ],
+            sprite_size=sprite_size,
+            frame_duration=4,
+            loop=True,
+            priority=5
+        )
+        
+        # Load normal attack animation (4 frames) - for combo strikes
+        self.anim_manager.load_animation(
+            AnimationState.ATTACK,
+            [
+                "assets/enemy/knight-monster/norm-atk/Attack1-pat1.png",
+                "assets/enemy/knight-monster/norm-atk/Attack1-pat2.png",
+                "assets/enemy/knight-monster/norm-atk/Attack1-pat3.png",
+                "assets/enemy/knight-monster/norm-atk/Attack1-pat4.png"
+            ],
+            sprite_size=sprite_size,
+            frame_duration=3,
+            loop=False,
+            priority=10,
+            next_state=AnimationState.IDLE
+        )
+        
+        # Load combo attack animation (7 frames) - for special combo finisher
+        self.anim_manager.load_animation(
+            AnimationState.SKILL_1,
+            [
+                "assets/enemy/knight-monster/combo-atk/Attack2-pat1.png",
+                "assets/enemy/knight-monster/combo-atk/Attack2-pat2.png",
+                "assets/enemy/knight-monster/combo-atk/Attack2-pat3.png",
+                "assets/enemy/knight-monster/combo-atk/Attack2-pat4.png",
+                "assets/enemy/knight-monster/combo-atk/Attack2-pat5.png",
+                "assets/enemy/knight-monster/combo-atk/Attack2-pat6.png",
+                "assets/enemy/knight-monster/combo-atk/Attack2-pat7.png"
+            ],
+            sprite_size=sprite_size,
+            frame_duration=3,
+            loop=False,
+            priority=15,
+            next_state=AnimationState.IDLE
+        )
+        
+        # Load fall animation (3 frames) - for jumping/falling/dash
+        self.anim_manager.load_animation(
+            AnimationState.FALL,
+            [
+                "assets/enemy/knight-monster/fall/fall-1.png",
+                "assets/enemy/knight-monster/fall/fall-2.png",
+                "assets/enemy/knight-monster/fall/fall-3.png"
+            ],
+            sprite_size=sprite_size,
+            frame_duration=4,
+            loop=True,
+            priority=6
+        )
+        
+        # Use DASH state for evasive dash animation
+        self.anim_manager.load_animation(
+            AnimationState.DASH,
+            [
+                "assets/enemy/knight-monster/run/run-1.png",
+                "assets/enemy/knight-monster/run/run-3.png",
+                "assets/enemy/knight-monster/run/run-5.png",
+                "assets/enemy/knight-monster/run/run-7.png"
+            ],
+            sprite_size=sprite_size,
+            frame_duration=2,
+            loop=True,
+            priority=12
+        )
     
     def _get_terrain_traits(self):
         """KnightMonster is a ground-based fighter"""
@@ -2547,6 +2655,46 @@ class KnightMonster(Enemy):
         if has_los and abs(dx) > 5:
             self.facing = 1 if dx > 0 else -1
             self.facing_angle = 0 if self.facing > 0 else math.pi
+        
+        # ----------------------------
+        # Update Animation State
+        # ----------------------------
+        from src.entities.animation_system import AnimationState
+        
+        # Determine which animation to play based on state
+        if self.state in ['windup', 'combo']:
+            # Attacking state
+            if self.combo_idx >= self.combo_len - 1 and self.combo_len > 1:
+                # Final strike in combo - use heavy attack animation
+                if self.anim_manager.current_state != AnimationState.SKILL_1:
+                    self.anim_manager.play(AnimationState.SKILL_1, force=True)
+            else:
+                # Regular combo strike
+                if self.anim_manager.current_state != AnimationState.ATTACK:
+                    self.anim_manager.play(AnimationState.ATTACK, force=True)
+        elif self.state == 'dash_evade' or self.dashing_frames > 0:
+            # Dashing/evading
+            if self.anim_manager.current_state != AnimationState.DASH:
+                self.anim_manager.play(AnimationState.DASH, force=True)
+        elif self.state == 'parry':
+            # Parrying - use idle with tension
+            if self.anim_manager.current_state != AnimationState.IDLE:
+                self.anim_manager.play(AnimationState.IDLE, force=True)
+        elif not self.on_ground and abs(self.vy) > 2:
+            # Falling/jumping
+            if self.anim_manager.current_state != AnimationState.FALL:
+                self.anim_manager.play(AnimationState.FALL)
+        elif abs(self.vx) > 1.5:
+            # Running
+            if self.anim_manager.current_state != AnimationState.RUN:
+                self.anim_manager.play(AnimationState.RUN)
+        else:
+            # Idle
+            if self.anim_manager.current_state != AnimationState.IDLE:
+                self.anim_manager.play(AnimationState.IDLE, force=True)
+        
+        # Update animation system
+        self.anim_manager.update()
         
         # Update position tracking
         self.x = float(self.rect.centerx)
@@ -2865,17 +3013,21 @@ class KnightMonster(Enemy):
         return (60, 120, 255) if not self.combat.is_invincible() else (35, 80, 200)
     
     def draw(self, surf, camera, show_los=False, show_nametags=False, debug_hitboxes=False):
-        """Draw the KnightMonster with custom telegraph"""
+        """Draw the KnightMonster with sprite animations"""
         if not self.combat.alive:
             return
         
         # Draw debug vision cone
         self.draw_debug_vision(surf, camera, show_los)
         
-        # Draw the enemy body with status effects
-        base_color = self.get_base_color()
-        status_color = self.get_status_effect_color(base_color)
-        pygame.draw.rect(surf, status_color, camera.to_screen_rect(self.rect), border_radius=5)
+        # Draw sprite with animation
+        sprite_drawn = self.anim_manager.draw(surf, camera, show_invincibility=True)
+        
+        # Fallback to colored rect if sprite fails to load
+        if not sprite_drawn:
+            base_color = self.get_base_color()
+            status_color = self.get_status_effect_color(base_color)
+            pygame.draw.rect(surf, status_color, camera.to_screen_rect(self.rect), border_radius=5)
         
         # Draw collision box outline in debug mode (F3)
         if debug_hitboxes:
