@@ -1688,7 +1688,8 @@ class WizardCaster(Enemy):
             sprite_size=(48, 24)
         )
         
-        # Fireball projectile (6 frames)
+        # Fireball projectile (6 frames) - MUCH larger sprite to compensate for transparency
+        # Original sprites are 341×341 with massive transparent padding, scale to 100×100 for visibility
         self.projectile_animations['fireball'] = load_projectile_animation(
             [
                 "assets/enemy/ener_wizard/Projectile/e_fireball/ball-evil2.png",
@@ -1698,7 +1699,7 @@ class WizardCaster(Enemy):
                 "assets/enemy/ener_wizard/Projectile/e_fireball/ball-evil7.png",
                 "assets/enemy/ener_wizard/Projectile/e_fireball/ball-evil9.png"
             ],
-            sprite_size=(20, 20)
+            sprite_size=(100, 100)
         )
     
     def _get_terrain_traits(self):
@@ -1744,11 +1745,12 @@ class WizardCaster(Enemy):
                 dist = max(1.0, (dx*dx+dy*dy)**0.5)
                 nx, ny = dx/dist, dy/dist
                 
-                # Spawn point higher up (chest/hand level instead of center)
+                # Spawn points vary by attack type
                 spawn_x = self.rect.centerx
-                spawn_y = self.rect.top + int(self.rect.height * 0.3)  # 30% from top
                 
                 if self.action == 'missile':
+                    # Missile: higher spawn point (20% from top - upper chest/shoulder level)
+                    spawn_y = self.rect.top + int(self.rect.height * 0.2)
                     # Increased missile hitbox from 18×6 to 32×12 for better visibility
                     hb = pygame.Rect(0,0,32,12)
                     hb.center = (spawn_x, spawn_y)
@@ -1762,7 +1764,10 @@ class WizardCaster(Enemy):
                     self.projectile_hitboxes.append(proj)
                     self.cool = 70
                 elif self.action == 'fireball':
-                    hb = pygame.Rect(0,0,12,12)
+                    # Fireball: mid-level spawn (30% from top - chest/hand level)
+                    spawn_y = self.rect.top + int(self.rect.height * 0.3)
+                    # Smaller hitbox for collision (so it doesn't hit walls), but we'll override sprite size for visibility
+                    hb = pygame.Rect(0,0,24,24)
                     hb.center = (spawn_x, spawn_y)
                     proj = Hitbox(hb, 180, 3, self, dir_vec=(nx,ny), vx=nx*6.0, vy=ny*6.0, aoe_radius=48, has_sprite=True, tag='fireball')
                     # Attach animation data
@@ -1770,10 +1775,14 @@ class WizardCaster(Enemy):
                     proj.anim_index = 0
                     proj.anim_timer = 0
                     proj.anim_speed = 4  # Change frame every 4 ticks
+                    # Override sprite display size (larger than hitbox for visibility despite transparency)
+                    proj.sprite_display_size = (80, 80)  # Large display size to show fireball through transparency
                     hitboxes.append(proj)
                     self.projectile_hitboxes.append(proj)
                     self.cool = 80
                 else:
+                    # Bolt: higher spawn point (20% from top - upper chest/shoulder level)
+                    spawn_y = self.rect.top + int(self.rect.height * 0.2)
                     # Increased bolt hitbox from 8×8 to 16×16 for better visibility
                     hb = pygame.Rect(0,0,16,16)
                     hb.center = (spawn_x, spawn_y)
@@ -2384,8 +2393,11 @@ class Bee(Enemy):
                     dy = ppos[1] - epos[1]
                     dist = max(1.0, (dx*dx+dy*dy)**0.5)
                     nx, ny = dx/dist, dy/dist
+                    # Spawn sting at bottom of bee hitbox (sting comes from below)
+                    spawn_x = self.rect.centerx
+                    spawn_y = self.rect.bottom - 4  # Near bottom of hitbox
                     # Better balanced sting hitbox (16×10)
-                    hb = pygame.Rect(0,0,16,10); hb.center = self.rect.center
+                    hb = pygame.Rect(0,0,16,10); hb.center = (spawn_x, spawn_y)
                     sting = Hitbox(hb, 120, 1, self, dir_vec=(nx,ny), vx=nx*7.5, vy=ny*7.5, has_sprite=True)
                     hitboxes.append(sting)
                     self.projectile_hitboxes.append(sting)

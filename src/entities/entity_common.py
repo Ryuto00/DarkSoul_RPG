@@ -1,5 +1,6 @@
 import math
 import pygame
+from typing import Optional, Tuple
 
 from config import ACCENT, WHITE
 
@@ -164,6 +165,8 @@ class Hitbox:
         self.anim_index = 0      # Current frame index
         self.anim_timer = 0      # Timer for frame progression
         self.anim_speed = 5      # Ticks per frame
+        # Optional custom sprite display size (overrides hitbox dimensions for rendering)
+        self.sprite_display_size: Optional[Tuple[int, int]] = None  # Tuple (width, height) or None to use hitbox size
 
     def tick(self):
         # move if velocity set (keep as float for precision, convert only when applying)

@@ -616,12 +616,19 @@ def draw_animated_projectiles(projectile_hitboxes: List, surf: pygame.Surface, c
         current_frame = frames[frame_index]
         
         if current_frame:
-            # Scale sprite to match hitbox dimensions AND camera zoom for visual accuracy
-            hitbox_w = int(hb.rect.width * camera.zoom)
-            hitbox_h = int(hb.rect.height * camera.zoom)
-            scaled_sprite = pygame.transform.scale(current_frame, (hitbox_w, hitbox_h))
+            # Check if projectile has custom sprite display size, otherwise use hitbox dimensions
+            if hasattr(hb, 'sprite_display_size') and hb.sprite_display_size is not None:
+                sprite_w, sprite_h = hb.sprite_display_size
+                scaled_w = int(sprite_w * camera.zoom)
+                scaled_h = int(sprite_h * camera.zoom)
+            else:
+                # Default: Scale sprite to match hitbox dimensions AND camera zoom for visual accuracy
+                scaled_w = int(hb.rect.width * camera.zoom)
+                scaled_h = int(hb.rect.height * camera.zoom)
+            
+            scaled_sprite = pygame.transform.scale(current_frame, (scaled_w, scaled_h))
             
             # Center sprite on hitbox
-            px = hb.rect.x
-            py = hb.rect.y
+            px = hb.rect.x - (scaled_w // camera.zoom - hb.rect.width) // 2
+            py = hb.rect.y - (scaled_h // camera.zoom - hb.rect.height) // 2
             surf.blit(scaled_sprite, camera.to_screen((px, py)))
