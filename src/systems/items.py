@@ -30,6 +30,14 @@ RARITY_BORDER_COLORS: Dict[str, Color] = {
     'Legendary': (255, 200, 80),
 }
 
+# Rarity -> max stack size mapping (default for consumables)
+RARITY_MAX_STACK: Dict[str, int] = {
+    'Normal': 20,
+    'Rare': 5,
+    'Epic': 3,
+    'Legendary': 1,
+}
+
 
 def darken_color(color: Color, factor: float = 0.6) -> Color:
     """Return a darker variant of a color."""
@@ -270,6 +278,7 @@ class HealConsumable(Consumable, ConsumableEffect):
 @dataclass(frozen=True)
 class ManaConsumable(Consumable, ConsumableEffect):
     amount: float = 0.0
+    percentage: float = 0.0  # If > 0, restore percentage of max_mana instead of flat amount
 
     @validate_consumable_use
     def use(self, game) -> bool:
@@ -277,7 +286,14 @@ class ManaConsumable(Consumable, ConsumableEffect):
         if not hasattr(player, 'mana'):
             return False
         before = player.mana
-        player.mana = min(player.max_mana, player.mana + self.amount)
+        
+        # Use percentage if specified, otherwise use flat amount
+        if self.percentage > 0:
+            restore_amount = player.max_mana * self.percentage
+        else:
+            restore_amount = self.amount
+            
+        player.mana = min(player.max_mana, player.mana + restore_amount)
         restored = player.mana - before
         if restored <= 0:
             return False
@@ -341,7 +357,7 @@ class PhoenixFeather(Consumable, ConsumableEffect):
     key: str = "phoenix_feather"
     name: str = "Phoenix Feather"
     color: Color = (255, 150, 50)
-    max_stack: int = 1
+    max_stack: int = 1  # Legendary always 1
     effect_text: str = "Auto-revive with 50% HP on death"
     description: str = "A mystical feather that ignites when life fades."
     flavor: str = "Reborn from ashes, just like the legendary phoenix."
@@ -389,7 +405,7 @@ class TimeCrystal(Consumable, ConsumableEffect):
     key: str = "time_crystal"
     name: str = "Time Crystal"
     color: Color = (150, 150, 255)
-    max_stack: int = 2
+    max_stack: int = 3  # Epic = 3
     effect_text: str = "Slows all enemies for 10 seconds"
     rarity: str = "Epic"
     description: str = "Crystallized time that bends reality around foes."
@@ -413,7 +429,7 @@ class LuckyCharm(Consumable, ConsumableEffect):
     key: str = "lucky_charm"
     name: str = "Lucky Charm"
     color: Color = (255, 215, 0)
-    max_stack: int = 1
+    max_stack: int = 3  # Epic = 3
     effect_text: str = "+50% money drops for 2 minutes"
     description: str = "A charm that attracts wealth from defeated foes."
     flavor: str = "Fortune favors the bold... and charmed."
@@ -496,7 +512,7 @@ def _build_consumable_items(shop_only: bool = False) -> Dict[str, Consumable]:
             color=(215, 110, 120),
             icon_letter="H",
             icon_path="assets/consumable/health_flask.jpg",
-            max_stack=5,
+            max_stack=10,  # Custom: Health potion has special stack size
             amount=3,
             effect_text="Restore 3 HP instantly.",
             description="Distilled petals from palace gardens.",
@@ -508,9 +524,9 @@ def _build_consumable_items(shop_only: bool = False) -> Dict[str, Consumable]:
             name="Mana Vial",
             color=(120, 180, 240),
             icon_letter="M",
-            max_stack=5,
-            amount=10,
-            effect_text="Restore 10 mana.",
+            max_stack=RARITY_MAX_STACK['Normal'],
+            percentage=0.25,
+            effect_text="Restore 25% of max mana.",
             description="Clinks with crystallized star-salts.",
             rarity='Normal',
         ),
@@ -520,7 +536,7 @@ def _build_consumable_items(shop_only: bool = False) -> Dict[str, Consumable]:
             name="Haste Draught",
             color=(255, 200, 120),
             icon_letter="S",
-            max_stack=3,
+            max_stack=RARITY_MAX_STACK['Rare'],
             amount=0.05,
             duration=8.0,
             effect_text="Short burst of speed and cooldown haste.",
@@ -533,7 +549,7 @@ def _build_consumable_items(shop_only: bool = False) -> Dict[str, Consumable]:
             name="Skyroot Elixir",
             color=(200, 220, 255),
             icon_letter="J",
-            max_stack=3,
+            max_stack=RARITY_MAX_STACK['Epic'],
             duration=12.0,
             jump_multiplier=1.25,
             extra_jumps=1,
@@ -548,7 +564,7 @@ def _build_consumable_items(shop_only: bool = False) -> Dict[str, Consumable]:
             name="Cavern Brew",
             color=(120, 200, 140),
             icon_letter="C",
-            max_stack=3,
+            max_stack=RARITY_MAX_STACK['Rare'],
             duration=30.0,
             bonus_pct=0.25,
             effect_text="+25% stamina for 30s. Bar glows green.",
