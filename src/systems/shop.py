@@ -2659,14 +2659,29 @@ class Shop:
                 break
     
     def _get_item_price(self, item):
-        """Calculate price for an item based on its properties"""
-        if hasattr(item, 'amount'):  # Heal consumable
-            base_price = 10 * item.amount
+        """Calculate price for an item based on its rarity and properties"""
+        # Rarity-based pricing for both consumables and equipment
+        rarity = getattr(item, 'rarity', 'Normal')
+        
+        if hasattr(item, 'use'):  # Consumable
+            # Base prices by rarity for consumables
+            rarity_base_prices = {
+                'Normal': 30,
+                'Rare': 150,
+                'Epic': 320,
+                'Legendary': 720,
+            }
+            base_price = rarity_base_prices.get(rarity, 30)
         elif hasattr(item, 'modifiers'):  # Equipment
-            # Price based on total modifier values
-            total_mods = sum(abs(v) for v in item.modifiers.values())
-            base_price = int(50 * total_mods)
-        else:  # Other consumables
+            # Base prices by rarity for equipment
+            rarity_base_prices = {
+                'Normal': 100,
+                'Rare': 300,
+                'Epic': 750,
+                'Legendary': 1900,
+            }
+            base_price = rarity_base_prices.get(rarity, 100)
+        else:  # Other items
             base_price = 30
         
         # Add some randomness but keep it consistent for this shop session
