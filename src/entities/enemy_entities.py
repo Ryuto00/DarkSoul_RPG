@@ -2806,12 +2806,12 @@ class Bee(Enemy):
 
 
 class Golem(Enemy):
-    """Boss with random pattern: dash (!), shoot (!!), stun (!!). Features sprite animations."""
+    """Elite enemy with random pattern: dash (!), shoot (!!), stun (!!). Features sprite animations."""
     def __init__(self, x, ground_y):
         combat_config = {
-            'max_hp': 120,
+            'max_hp': 30,
             'default_ifr': 12,
-            'money_drop': (50, 100)
+            'money_drop': (20, 40)
         }
         super().__init__(x, ground_y, width=60, height=90, combat_config=combat_config,
                         vision_range=500, cone_half_angle=math.pi/3, turn_rate=0.03)
@@ -3084,14 +3084,14 @@ class Golem(Enemy):
         self.draw_nametag(surf, camera, show_nametags)
 
 class KnightMonster(Enemy):
-    """Elite melee knight with combo attacks - clean rewrite"""
+    """Boss melee knight with combo attacks - clean rewrite"""
     
     def __init__(self, x: int, ground_y: int):
         # Combat configuration
         combat_config = {
-            'max_hp': 30,
-            'default_ifr': 8,
-            'money_drop': (20, 40)
+            'max_hp': 120,
+            'default_ifr': 12,
+            'money_drop': (50, 100)
         }
         
         # Initialize base enemy
@@ -3118,6 +3118,7 @@ class KnightMonster(Enemy):
         self.combo_hits = 0  # Current hit in combo
         self.combo_total = 0  # Total hits in this combo (1-3)
         self.combo_delay = 0  # Delay between combo hits
+        self.attack_variant = 1  # Which attack animation to use (1 or 2)
         
         # Movement
         self.patrol_direction = random.choice([-1, 1])
@@ -3142,9 +3143,12 @@ class KnightMonster(Enemy):
         self.anim_manager = AnimationManager(self, default_state=AnimationState.IDLE)
         self.anim_manager.set_sprite_offset_y(-2)
         
-        # Knight sprite size - scaled much larger to ensure head is visible and hittable
-        # Original 39×44, scaled to 78×88 (2x) to match tall hitbox
-        sprite_size = (78, 88)
+        # Knight sprite size - different sizes needed due to different source image dimensions
+        # Idle/Run: 39×44 pixels → scaled to 86×88 (2.2x scale)
+        # Attack: 100×101 pixels → scaled to 220×222 to maintain same knight body size
+        # This ensures the knight appears the same size across all animations
+        base_sprite_size = (86, 88)
+        attack_sprite_size = (220, 222)  # Larger to accommodate weapon swing and maintain knight size
         
         # Idle animation (4 frames)
         self.anim_manager.load_animation(
@@ -3155,7 +3159,7 @@ class KnightMonster(Enemy):
                 "assets/enemy/knight-monster/idle-knight-enemy/Idle-3.png",
                 "assets/enemy/knight-monster/idle-knight-enemy/Idle-4.png"
             ],
-            sprite_size=sprite_size,
+            sprite_size=base_sprite_size,
             frame_duration=8,
             loop=True,
             priority=0
@@ -3174,44 +3178,47 @@ class KnightMonster(Enemy):
                 "assets/enemy/knight-monster/run/run-7.png",
                 "assets/enemy/knight-monster/run/run-8.png"
             ],
-            sprite_size=sprite_size,
+            sprite_size=base_sprite_size,
             frame_duration=4,
             loop=True,
             priority=5
         )
         
-        # Attack animation (4 frames) - normal combo strike
+        # Attack animation variant 1 (7 frames) - larger sprite_size to match knight body size
         self.anim_manager.load_animation(
             AnimationState.ATTACK,
             [
-                "assets/enemy/knight-monster/norm-atk/Attack1-pat1.png",
-                "assets/enemy/knight-monster/norm-atk/Attack1-pat2.png",
-                "assets/enemy/knight-monster/norm-atk/Attack1-pat3.png",
-                "assets/enemy/knight-monster/norm-atk/Attack1-pat4.png"
+                "assets/enemy/knight-monster/attk-nm-1/attk-1.png",
+                "assets/enemy/knight-monster/attk-nm-1/attk-2.png",
+                "assets/enemy/knight-monster/attk-nm-1/attk-3.png",
+                "assets/enemy/knight-monster/attk-nm-1/attk-4.png",
+                "assets/enemy/knight-monster/attk-nm-1/attk-5.png",
+                "assets/enemy/knight-monster/attk-nm-1/attk-6.png",
+                "assets/enemy/knight-monster/attk-nm-1/attk-7.png"
             ],
-            sprite_size=sprite_size,
-            frame_duration=3,
+            sprite_size=attack_sprite_size,
+            frame_duration=4,
             loop=False,
             priority=10,
             next_state=AnimationState.IDLE
         )
         
-        # Heavy attack animation (7 frames) - combo finisher
+        # Attack animation variant 2 (7 frames) - larger sprite_size to match knight body size
         self.anim_manager.load_animation(
             AnimationState.SKILL_1,
             [
-                "assets/enemy/knight-monster/combo-atk/Attack2-pat1.png",
-                "assets/enemy/knight-monster/combo-atk/Attack2-pat2.png",
-                "assets/enemy/knight-monster/combo-atk/Attack2-pat3.png",
-                "assets/enemy/knight-monster/combo-atk/Attack2-pat4.png",
-                "assets/enemy/knight-monster/combo-atk/Attack2-pat5.png",
-                "assets/enemy/knight-monster/combo-atk/Attack2-pat6.png",
-                "assets/enemy/knight-monster/combo-atk/Attack2-pat7.png"
+                "assets/enemy/knight-monster/attk-nm-2/Attack2-1.png",
+                "assets/enemy/knight-monster/attk-nm-2/Attack2-2.png",
+                "assets/enemy/knight-monster/attk-nm-2/Attack2-3.png",
+                "assets/enemy/knight-monster/attk-nm-2/Attack2-4.png",
+                "assets/enemy/knight-monster/attk-nm-2/Attack2-5.png",
+                "assets/enemy/knight-monster/attk-nm-2/Attack2-6.png",
+                "assets/enemy/knight-monster/attk-nm-2/Attack2-7.png"
             ],
-            sprite_size=sprite_size,
-            frame_duration=3,
+            sprite_size=attack_sprite_size,
+            frame_duration=4,
             loop=False,
-            priority=15,
+            priority=10,
             next_state=AnimationState.IDLE
         )
     
@@ -3341,6 +3348,7 @@ class KnightMonster(Enemy):
         self.state = 'attacking'
         self.combo_total = random.randint(1, 3)  # 1-3 hit combo
         self.combo_hits = 0
+        self.attack_variant = random.randint(1, 2)  # Randomly choose attack animation
         self.telegraph_timer = 15  # Telegraph before first hit
         self.tele_text = '!'
         
@@ -3377,8 +3385,8 @@ class KnightMonster(Enemy):
         """Execute a single strike"""
         from src.entities.animation_system import AnimationState
         
-        # Determine if this is the final hit (use heavy attack)
-        is_finisher = (self.combo_hits == self.combo_total - 1) and self.combo_total > 1
+        # Use the randomly selected attack variant (both are now equally good)
+        is_finisher = False  # Not used anymore, both animations are equivalent
         
         # Calculate damage (scales with combo)
         base_damage = 4
@@ -3407,8 +3415,8 @@ class KnightMonster(Enemy):
         # Small lunge forward
         self.vx = self.facing * 1.5
         
-        # Play attack animation
-        if is_finisher:
+        # Play the randomly selected attack animation variant
+        if self.attack_variant == 2:
             self.anim_manager.play(AnimationState.SKILL_1, force=True)
         else:
             self.anim_manager.play(AnimationState.ATTACK, force=True)

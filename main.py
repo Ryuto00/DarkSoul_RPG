@@ -2090,6 +2090,15 @@ class Game:
                 self.interaction_prompt, interaction_x, interaction_y = result
                 self.interaction_position = (interaction_x, interaction_y)
 
+                # Check if this is a boss room with enemies still alive - prevent door usage
+                is_boss_room = getattr(self.level, 'room_code', '').endswith('6A') or getattr(self.level, 'room_code', '').endswith('6B')
+                enemies_alive = any(getattr(e, 'alive', False) for e in self.enemies)
+                
+                if is_boss_room and enemies_alive:
+                    # Boss room is locked until all enemies are defeated
+                    self.interaction_prompt = "Door is locked! Defeat all enemies first!"
+                    return
+
                 # Show prompt; validate at the moment of E-press before transitioning.
                 if is_e_pressed:
                     try:

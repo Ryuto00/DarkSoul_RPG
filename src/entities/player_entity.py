@@ -332,7 +332,7 @@ class Player:
         The attack system uses self.charging flag and self.charge_time counter to track state.
         Animation priority ensures attack animations override movement during combat.
         """
-        sprite_size = (48, 64)
+        sprite_size = (42, 40)
         
         # IDLE - Lowest priority, always available
         self.anim_manager.load_animation(
@@ -444,22 +444,24 @@ class Player:
         - Small sprites (80×95, 74×105): IDLE, JUMP, FALL - less padding
         - Large sprites (222×144, 231×142): RUN, ATTACK, SKILLS - lots of padding
         
-        Solution: Scale large sprites 2.3× bigger to compensate for extra padding,
+        Solution: Scale large sprites 2.8× bigger to compensate for extra padding,
         ensuring the actual wizard character appears the same visual size across all animations.
         """
         # Small sprites with minimal padding (IDLE, JUMP, FALL)
-        sprite_size_small = (128, 152)  # 1.6× scale for 80×95 base
+        # Native: 80×95 - scale to match Knight visual size
+        sprite_size_small = (42, 40)  # Match Knight size
         
         # Large sprites with heavy padding (RUN, ATTACK, SKILLS)
-        # Native 231×142, but character is tiny inside - scale 2.3× bigger
-        sprite_size_large = (294, 355)  # Compensates for padding to match visual size
+        # Native: 222×144 / 231×142 - character is tiny inside, needs 2.8× scale compensation
+        # 222/80 ≈ 2.78, so we scale proportionally larger to match visual wizard size
+        sprite_size_large = (117, 112)  # 2.8× bigger than small sprites
         
         # IDLE - Lowest priority, always available (6 frames)
         # Native: 80×95 (minimal padding)
         self.anim_manager.load_animation(
             AnimationState.IDLE,
             [f"assets/Player/wizard/idle-wizard/idle{i}.png" for i in range(1, 7)],
-            sprite_size=(80,95),
+            sprite_size=sprite_size_small,
             frame_duration=8,
             loop=True,
             priority=0
@@ -470,7 +472,7 @@ class Player:
         self.anim_manager.load_animation(
             AnimationState.RUN,
             [f"assets/Player/wizard/run-wizard/run{i}.png" for i in range(1, 9)],
-            sprite_size=(200, 152),  # Larger to compensate for padding
+            sprite_size=sprite_size_large,  # 2.8× bigger to compensate for padding
             frame_duration=5,
             loop=True,
             priority=1
@@ -481,7 +483,7 @@ class Player:
         self.anim_manager.load_animation(
             AnimationState.JUMP,
             [f"assets/Player/wizard/jump-wizard/Jump-{i}.png" for i in range(1, 3)],
-            sprite_size=(80,95),
+            sprite_size=sprite_size_small,
             frame_duration=6,
             loop=False,
             priority=2
@@ -492,22 +494,10 @@ class Player:
         self.anim_manager.load_animation(
             AnimationState.FALL,
             [f"assets/Player/wizard/wizard-fall/jump{i}.png" for i in range(1, 3)],
-            sprite_size=(80, 120),
+            sprite_size=sprite_size_small,
             frame_duration=6,
             loop=False,
             priority=2
-        )
-        
-        # WALL_SLIDE - Proper climb sprite
-        # Use small size (assume similar to idle/jump)
-        self.anim_manager.load_animation(
-            AnimationState.WALL_SLIDE,
-            ["assets/Player/wizard/climb-wizard.png"],
-            sprite_size=(80,95),
-            sprite_offset=(30, 0),  # Move sprite up by 5 pixels
-            frame_duration=1,
-            loop=True,
-            priority=3
         )
         
         # ATTACK - Basic attack animation (4 frames from wizard-atk)
@@ -516,7 +506,7 @@ class Player:
         self.anim_manager.load_animation(
             AnimationState.ATTACK,
             [f"assets/Player/wizard/wizard-atk/attk{i:03d}.png" for i in range(1, 5)],
-            sprite_size=(200, 140),  # Larger to compensate for padding
+            sprite_size=sprite_size_large,  # 2.8× bigger to compensate for padding
             frame_duration=2,  # Synced to ATTACK_COOLDOWN
             loop=False,
             priority=4,
@@ -529,7 +519,7 @@ class Player:
         self.anim_manager.load_animation(
             AnimationState.SKILL_1,
             [f"assets/Player/wizard/wizard-atk/attk{i:03d}.png" for i in range(1, 5)],
-            sprite_size=(200, 140),  # Larger to compensate for padding
+            sprite_size=sprite_size_large,  # 2.8× bigger to compensate for padding
             frame_duration=2,  # Quick fireball cast
             loop=False,
             priority=5,
@@ -542,7 +532,7 @@ class Player:
         self.anim_manager.load_animation(
             AnimationState.SKILL_2,
             [f"assets/Player/wizard/wizard-skill/skill{i}.png" for i in range(1, 9)],
-            sprite_size=(200, 140),  # Larger to compensate for padding
+            sprite_size=sprite_size_large,  # 2.8× bigger to compensate for padding
             frame_duration=4,  # Slower AOE spell cast
             loop=False,
             priority=5,
@@ -555,7 +545,7 @@ class Player:
         self.anim_manager.load_animation(
             AnimationState.SKILL_3,
             [f"assets/Player/wizard/wizard-lazer-skill-atk/attk{i:03d}.png" for i in range(1, 6)],
-            sprite_size=(200, 140),  # Larger to compensate for padding
+            sprite_size=sprite_size_large,  # 2.8× bigger to compensate for padding
             frame_duration=5,  # Fast aggressive laser cast
             loop=False,
             priority=5,

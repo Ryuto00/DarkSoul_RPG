@@ -18,6 +18,9 @@ from src.core.utils import draw_text
 
 logger = logging.getLogger(__name__)
 
+# Cache for skill icons to prevent loading every frame (performance optimization)
+_skill_icon_cache = {}
+
 
 def draw_hud(game, screen: pygame.Surface) -> None:
     """Draw HUD elements using `game`'s state.
@@ -194,26 +197,74 @@ def draw_hud(game, screen: pygame.Surface) -> None:
         draw_text(screen, f"Class: {getattr(game.player, 'cls', 'Unknown')}", (WIDTH - 220, 28), (200, 200, 200), size=16)
         draw_text(screen, f"Coins: {game.player.money}", (WIDTH - 220, 48), (255, 215, 0), bold=True)
 
-        # Skill bar (3 slots) - increased size
-        sbx, sby = 16, HEIGHT - 90
-        slot_w, slot_h = 56, 56
+        # Skill bar (3 slots) - top center - smaller size
+        slot_w, slot_h = 40, 40  # Reduced from 56 to 40
+        slot_spacing = 6  # Spacing between slots
+        # Calculate total width for 6 slots (3 skills + 3 consumables)
+        total_slots = 6
+        total_width = slot_w * total_slots + slot_spacing * (total_slots - 1)
+        # Start position to center all 6 slots
+        start_x = (WIDTH - total_width) // 2
+        sbx = start_x
+        sby = 16  # Top of screen
         if game.player.cls == 'Knight':
             names = ['Shield', 'Power', 'Charge']
             actives = [getattr(game.player.combat, 'shield_timer', 0) > 0, getattr(game.player.combat, 'power_timer', 0) > 0, False]
+            skill_icons = [
+                'assets/Player/Knight/skill-1.png',
+                'assets/Player/Knight/skill-2.png',
+                'assets/Player/Knight/skill-3.png'
+            ]
+            # Icon scales - skill 1 and 2 are bigger
+            icon_scales = [1.2, 1.2, 1.0]
         elif game.player.cls == 'Ranger':
             names = ['Triple', 'Sniper', 'Speed']
             actives = [game.player.triple_timer > 0, game.player.sniper_ready, game.player.speed_timer > 0]
+            skill_icons = [
+                'assets/Player/Ranger/skill-1.png',
+                'assets/Player/Ranger/skill-2.png',
+                'assets/Player/Ranger/skill-3.png'
+            ]
+            # Icon scales - skill 1 and 2 are bigger
+            icon_scales = [1.2, 1.2, 1.0]
         else:
             names = ['Fireball', 'Cold', 'Missile']
             actives = [False, False, False]
+            skill_icons = [
+                'assets/Player/wizard/skill-1.png',
+                'assets/Player/wizard/skill-2.png',
+                'assets/Player/wizard/skill-3.png'
+            ]
+            # Icon scales - skill 1 and 2 are bigger
+            icon_scales = [1.2, 1.2, 1.0]
         cds = [game.player.skill_cd1, game.player.skill_cd2, game.player.skill_cd3]
         maxcds = [max(1, game.player.skill_cd1_max), max(1, game.player.skill_cd2_max), max(1, game.player.skill_cd3_max)]
         for i in range(3):
-            rx = sbx + i * (slot_w + 8)
+            rx = sbx + i * (slot_w + slot_spacing)
             ry = sby
             pygame.draw.rect(screen, (40, 40, 50), pygame.Rect(rx, ry, slot_w, slot_h), border_radius=6)
             if actives[i]:
                 pygame.draw.rect(screen, (120, 210, 220), pygame.Rect(rx - 2, ry - 2, slot_w + 4, slot_h + 4), width=2, border_radius=8)
+            
+            # Draw skill icon if available (cached for performance)
+            if skill_icons[i]:
+                icon_w = int((slot_w - 4) * icon_scales[i])
+                icon_h = int((slot_h - 4) * icon_scales[i])
+                icon_key = (skill_icons[i], icon_w, icon_h)
+                if icon_key not in _skill_icon_cache:
+                    try:
+                        icon_img = pygame.image.load(skill_icons[i]).convert_alpha()
+                        icon_img = pygame.transform.scale(icon_img, (icon_w, icon_h))
+                        _skill_icon_cache[icon_key] = icon_img
+                    except Exception:
+                        _skill_icon_cache[icon_key] = None  # Cache the failure too
+                
+                if _skill_icon_cache[icon_key]:
+                    # Center the icon in the slot
+                    icon_x = rx + (slot_w - icon_w) // 2
+                    icon_y = ry + (slot_h - icon_h) // 2
+                    screen.blit(_skill_icon_cache[icon_key], (icon_x, icon_y))
+            
             if cds[i] > 0:
                 pct = cds[i] / maxcds[i]
                 h = int(slot_h * pct)
@@ -224,9 +275,8 @@ def draw_hud(game, screen: pygame.Surface) -> None:
                 except Exception:
                     pygame.draw.rect(screen, (0, 0, 0), overlay)
                 secs = max(0.0, cds[i] / FPS)
-                draw_text(screen, f"{secs:.0f}", (rx + 12, ry + 12), (220, 220, 220), size=18, bold=True)
-            draw_text(screen, str(i + 1), (rx + 2, ry + 2), (200, 200, 200), size=14)
-            draw_text(screen, names[i], (rx + 2, ry + slot_h - 14), (180, 180, 200), size=12)
+                draw_text(screen, f"{secs:.0f}", (rx + 10, ry + 10), (220, 220, 220), size=14, bold=True)
+            draw_text(screen, str(i + 1), (rx + 2, ry + 2), (200, 200, 200), size=12)
 
         # Consumable hotbar (delegated to inventory)
         try:

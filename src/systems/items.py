@@ -362,6 +362,7 @@ class PhoenixFeather(Consumable, ConsumableEffect):
     description: str = "A mystical feather that ignites when life fades."
     flavor: str = "Reborn from ashes, just like the legendary phoenix."
     icon_letter: str = "P"
+    icon_path: str = "assets/consumable/pheonix.png"
     rarity: str = "Legendary"
 
     def use(self, game) -> bool:
@@ -434,6 +435,7 @@ class LuckyCharm(Consumable, ConsumableEffect):
     description: str = "A charm that attracts wealth from defeated foes."
     flavor: str = "Fortune favors the bold... and charmed."
     icon_letter: str = "L"
+    icon_path: str = "assets/consumable/lucky-charm.png"
     rarity: str = "Epic"
 
     def use(self, game) -> bool:
@@ -511,7 +513,7 @@ def _build_consumable_items(shop_only: bool = False) -> Dict[str, Consumable]:
             name="Health Flask",
             color=(215, 110, 120),
             icon_letter="H",
-            icon_path="assets/consumable/health_flask.jpg",
+            icon_path="assets/consumable/HP_potion.png",
             max_stack=10,  # Custom: Health potion has special stack size
             amount=3,
             effect_text="Restore 3 HP instantly.",
@@ -524,6 +526,7 @@ def _build_consumable_items(shop_only: bool = False) -> Dict[str, Consumable]:
             name="Mana Vial",
             color=(120, 180, 240),
             icon_letter="M",
+            icon_path="assets/consumable/Mana_potion.png",
             max_stack=RARITY_MAX_STACK['Normal'],
             percentage=0.25,
             effect_text="Restore 25% of max mana.",
@@ -549,6 +552,7 @@ def _build_consumable_items(shop_only: bool = False) -> Dict[str, Consumable]:
             name="Skyroot Elixir",
             color=(200, 220, 255),
             icon_letter="J",
+            icon_path="assets/consumable/jump-comsumabel.png",
             max_stack=RARITY_MAX_STACK['Epic'],
             duration=12.0,
             jump_multiplier=1.25,
@@ -564,6 +568,7 @@ def _build_consumable_items(shop_only: bool = False) -> Dict[str, Consumable]:
             name="Cavern Brew",
             color=(120, 200, 140),
             icon_letter="C",
+            icon_path="assets/consumable/Stamina_potion.png",
             max_stack=RARITY_MAX_STACK['Rare'],
             duration=30.0,
             bonus_pct=0.25,

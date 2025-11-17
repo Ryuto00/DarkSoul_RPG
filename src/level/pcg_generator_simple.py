@@ -249,7 +249,7 @@ def _wire_cross_level_doors(all_levels_rooms: List[List[RoomData]]) -> None:
             exit_1 -> A
       - If it has A and B:
             exit_1 -> A, exit_2 -> B
-    Last level's last index has no exits added here.
+    Last level's last index now loops back to level 1, room 1A (victory loop).
     """
     num_levels = len(all_levels_rooms)
 
@@ -286,6 +286,32 @@ def _wire_cross_level_doors(all_levels_rooms: List[List[RoomData]]) -> None:
             room.door_exits["door_exit_1"] = {"level_id": primary.level_id, "room_code": primary.room_code}
             if secondary is not None:
                 room.door_exits["door_exit_2"] = {"level_id": secondary.level_id, "room_code": secondary.room_code}
+    
+    # Add exit for final boss room (last level, last index) - loops back to start
+    if num_levels > 0 and all_levels_rooms[-1]:
+        final_level_rooms = all_levels_rooms[-1]
+        final_by_index = _group_rooms_by_index(final_level_rooms)
+        
+        if final_by_index:
+            final_index = max(final_by_index.keys())
+            final_group = final_by_index.get(final_index, [])
+            
+            # Find first room of first level to loop back to
+            if all_levels_rooms and all_levels_rooms[0]:
+                first_level_rooms = all_levels_rooms[0]
+                first_by_index = _group_rooms_by_index(first_level_rooms)
+                
+                if first_by_index:
+                    first_index = min(first_by_index.keys())
+                    first_group = first_by_index.get(first_index, [])
+                    
+                    if first_group:
+                        # Add exit from final boss room back to level 1, room 1
+                        for room in final_group:
+                            room.door_exits["door_exit_1"] = {
+                                "level_id": first_group[0].level_id, 
+                                "room_code": first_group[0].room_code
+                            }
 
 
 def _compute_entrances(all_levels_rooms: List[List[RoomData]]) -> None:
