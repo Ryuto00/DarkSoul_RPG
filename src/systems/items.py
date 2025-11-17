@@ -412,6 +412,7 @@ class TimeCrystal(Consumable, ConsumableEffect):
     description: str = "Crystallized time that bends reality around foes."
     flavor: str = "Feel time itself slow to a crawl."
     icon_letter: str = "T"
+    icon_path: str = "assets/consumable/slow-mons.png"
 
     def use(self, game) -> bool:
         # Apply slow effect to all enemies
@@ -435,7 +436,7 @@ class LuckyCharm(Consumable, ConsumableEffect):
     description: str = "A charm that attracts wealth from defeated foes."
     flavor: str = "Fortune favors the bold... and charmed."
     icon_letter: str = "L"
-    icon_path: str = "assets/consumable/lucky-charm.png"
+    icon_path: str = "assets/consumable/lucky.png"
     rarity: str = "Epic"
 
     def use(self, game) -> bool:
@@ -539,6 +540,7 @@ def _build_consumable_items(shop_only: bool = False) -> Dict[str, Consumable]:
             name="Haste Draught",
             color=(255, 200, 120),
             icon_letter="S",
+            icon_path="assets/consumable/time-speed.png",
             max_stack=RARITY_MAX_STACK['Rare'],
             amount=0.05,
             duration=8.0,

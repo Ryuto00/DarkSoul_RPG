@@ -506,7 +506,7 @@ class Player:
         self.anim_manager.load_animation(
             AnimationState.ATTACK,
             [f"assets/Player/wizard/wizard-atk/attk{i:03d}.png" for i in range(1, 5)],
-            sprite_size=sprite_size_large,  # 2.8× bigger to compensate for padding
+            sprite_size=(80,70),  # 2.8× bigger to compensate for padding
             frame_duration=2,  # Synced to ATTACK_COOLDOWN
             loop=False,
             priority=4,
@@ -519,7 +519,7 @@ class Player:
         self.anim_manager.load_animation(
             AnimationState.SKILL_1,
             [f"assets/Player/wizard/wizard-atk/attk{i:03d}.png" for i in range(1, 5)],
-            sprite_size=sprite_size_large,  # 2.8× bigger to compensate for padding
+            sprite_size=(80,70),  # 2.8× bigger to compensate for padding
             frame_duration=2,  # Quick fireball cast
             loop=False,
             priority=5,
@@ -532,7 +532,7 @@ class Player:
         self.anim_manager.load_animation(
             AnimationState.SKILL_2,
             [f"assets/Player/wizard/wizard-skill/skill{i}.png" for i in range(1, 9)],
-            sprite_size=sprite_size_large,  # 2.8× bigger to compensate for padding
+            sprite_size=(80,70),  # 2.8× bigger to compensate for padding
             frame_duration=4,  # Slower AOE spell cast
             loop=False,
             priority=5,
@@ -545,7 +545,7 @@ class Player:
         self.anim_manager.load_animation(
             AnimationState.SKILL_3,
             [f"assets/Player/wizard/wizard-lazer-skill-atk/attk{i:03d}.png" for i in range(1, 6)],
-            sprite_size=sprite_size_large,  # 2.8× bigger to compensate for padding
+            sprite_size=(80,70),  # 2.8× bigger to compensate for padding
             frame_duration=5,  # Fast aggressive laser cast
             loop=False,
             priority=5,

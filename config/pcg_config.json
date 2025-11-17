@@ -1,9 +1,9 @@
 {
   "pcg_config": {
     "use_pcg": false,
-    "seed_mode": "random",
-    "seed": 33611297,
-    "selected_class": "Wizard",
+    "seed_mode": "fixed",
+    "seed": 1398485361,
+    "selected_class": "Knight",
     "num_levels": 3,
     "rooms_per_level": 6,
     "room_width": 50,

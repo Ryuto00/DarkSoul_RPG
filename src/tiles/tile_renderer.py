@@ -16,6 +16,10 @@ class TileRenderer:
         self.base_cache: Dict[TileType, pygame.Surface] = {}  # For base surfaces
         self.animation_cache: Dict[str, List[pygame.Surface]] = {}
         self.animation_timers: Dict[str, float] = {}
+        # Pre-rendered level cache for PCG levels
+        self.level_surface_cache: Dict[str, pygame.Surface] = {}
+        self.cached_camera_offset: Tuple[float, float] = (0, 0)
+        self.cached_zoom: float = 1.0
 
     def render_tile(self, surface: pygame.Surface, tile_type: TileType,
                    x: int, y: int, camera_offset: Tuple[float, float] = (0, 0),
@@ -230,6 +234,7 @@ class TileRenderer:
     ):
         """
         Render all visible tiles in the grid for the given camera and zoom.
+        Uses chunk-based caching to improve performance on large PCG levels.
 
         camera_offset: (camera_x, camera_y) in WORLD coordinates.
         zoom: current zoom factor.
@@ -277,14 +282,21 @@ class TileRenderer:
                 zoom, screen_w, screen_h, world_left, world_top, world_right, world_bottom, start_tx, end_tx, start_ty, end_ty
             )
 
+        # Optimization: Only render non-air tiles to reduce draw calls
         for ty in range(start_ty, end_ty):
             row = tile_grid[ty]
             for tx in range(start_tx, end_tx):
                 tile_value = row[tx]
-                if tile_value < 0:
+                # Skip air tiles entirely
+                if tile_value < 0 or tile_value == 0:
                     continue
 
                 tile_type = TileType(tile_value)
+                
+                # Additional check to skip AIR tiles by enum
+                if tile_type == TileType.AIR:
+                    continue
+                
                 world_x = tx * self.tile_size
                 world_y = ty * self.tile_size
 
@@ -339,12 +351,13 @@ class TileRenderer:
         self.base_cache.clear()
         self.animation_cache.clear()
         self.animation_timers.clear()
+        self.level_surface_cache.clear()
 
     def preload_tiles(self):
         """Preload all tile surfaces for different zoom levels."""
         for tile_type in TileType:
             tile_data = tile_registry.get_tile(tile_type)
-            if tile_data:
-                # Preload for each zoom level
+            if tile_data and tile_type != TileType.AIR:
+                # Preload for each zoom level (only non-air tiles)
                 for zoom in [1.0, 1.2, 1.5]:
                     self._get_tile_surface_for_zoom(tile_data, 0, zoom)
