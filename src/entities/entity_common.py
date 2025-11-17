@@ -3,6 +3,107 @@ import pygame
 
 from config import ACCENT, WHITE
 
+# ============================================================================
+# Shared Vision / Alert System
+# ============================================================================
+
+class AlertSystem:
+    """
+    Global alert system for enemy coordination.
+    When one enemy spots the player, nearby allies are alerted.
+    """
+    def __init__(self):
+        self.alerts = {}  # {enemy_id: {'position': (x, y), 'timestamp': int, 'level': int}}
+        self.alert_radius = 400  # Radius in pixels for alert propagation
+        self.alert_duration = 180  # Frames an alert stays active (3 seconds at 60fps)
+        self.current_frame = 0
+    
+    def broadcast_alert(self, enemy, player_position, alert_level=2):
+        """
+        Broadcast an alert from an enemy who spotted the player.
+        
+        Args:
+            enemy: Enemy instance broadcasting the alert
+            player_position: (x, y) tuple of player's current position
+            alert_level: 1=investigating, 2=combat
+        """
+        enemy_id = id(enemy)
+        self.alerts[enemy_id] = {
+            'position': player_position,
+            'enemy_pos': (enemy.rect.centerx, enemy.rect.centery),
+            'timestamp': self.current_frame,
+            'level': alert_level
+        }
+    
+    def check_nearby_alerts(self, enemy):
+        """
+        Check if there are any active alerts near this enemy.
+        Returns (has_alert, player_last_seen_pos, alert_level) or (False, None, 0)
+        
+        Args:
+            enemy: Enemy instance checking for alerts
+            
+        Returns:
+            tuple: (has_alert: bool, position: tuple or None, level: int)
+        """
+        enemy_pos = (enemy.rect.centerx, enemy.rect.centery)
+        enemy_id = id(enemy)
+        
+        # Find closest alert within radius
+        closest_alert = None
+        closest_dist = float('inf')
+        
+        for aid, alert_data in self.alerts.items():
+            if aid == enemy_id:
+                continue  # Don't alert yourself
+            
+            # Check if alert is still valid
+            age = self.current_frame - alert_data['timestamp']
+            if age > self.alert_duration:
+                continue
+            
+            # Check distance to alerting enemy
+            alert_enemy_pos = alert_data['enemy_pos']
+            dx = alert_enemy_pos[0] - enemy_pos[0]
+            dy = alert_enemy_pos[1] - enemy_pos[1]
+            dist = (dx*dx + dy*dy) ** 0.5
+            
+            if dist <= self.alert_radius and dist < closest_dist:
+                closest_dist = dist
+                closest_alert = alert_data
+        
+        if closest_alert:
+            return (True, closest_alert['position'], closest_alert['level'])
+        return (False, None, 0)
+    
+    def clear_old_alerts(self):
+        """Remove alerts that have expired."""
+        expired = []
+        for enemy_id, alert_data in self.alerts.items():
+            age = self.current_frame - alert_data['timestamp']
+            if age > self.alert_duration:
+                expired.append(enemy_id)
+        
+        for enemy_id in expired:
+            del self.alerts[enemy_id]
+    
+    def update(self):
+        """Update alert system each frame."""
+        self.current_frame += 1
+        self.clear_old_alerts()
+    
+    def reset(self):
+        """Clear all alerts (e.g., when changing levels)."""
+        self.alerts.clear()
+        self.current_frame = 0
+
+# Global alert system instance
+alert_system = AlertSystem()
+
+# ============================================================================
+# Vision Cone Helper
+# ============================================================================
+
 # ADDED: Vision cone helper function
 def in_vision_cone(enemy_pos, player_pos, facing_angle, cone_half_angle, max_range):
     """

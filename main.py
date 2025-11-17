@@ -34,6 +34,7 @@ from src.level.config_loader import load_pcg_runtime_config
 from src.level.pcg_generator_simple import generate_simple_pcg_level_set
 from src.level.level_loader import level_loader
 from src.entities.entities import Player, hitboxes, floating, DamageNumber
+from src.entities.entity_common import alert_system
 from src.systems.inventory import Inventory
 from src.systems.menu import Menu
 from src.systems.shop import Shop
@@ -685,6 +686,7 @@ class Game:
         self.enemies = getattr(self.level, "enemies", [])
         hitboxes.clear()
         floating.clear()
+        alert_system.reset()  # Clear alerts when changing rooms
         
         # Trigger shop for legacy levels after every room transition
         if not self.use_pcg:
@@ -757,6 +759,9 @@ class Game:
                 else:
                     self.switch_room(+1)
                     break
+
+        # Update alert system for enemy coordination
+        alert_system.update()
 
         for e in self.enemies:
             e.tick(self.level, self.player)

@@ -1,11 +1,12 @@
 """
 Vision Component - Shared vision and detection logic for entities
 Eliminates code duplication in vision cone updates and player detection
+Includes shared alert system for enemy coordination
 """
 
 import math
 import pygame
-from ..entity_common import in_vision_cone
+from ..entity_common import in_vision_cone, alert_system
 from ...core.utils import los_clear
 
 
@@ -20,10 +21,16 @@ class VisionComponent:
         self.facing = 1  # 1 for right, -1 for left
         self.facing_angle = 0 if self.facing > 0 else math.pi
         
+        # Alert system integration
+        self.alert_level = 0  # 0=idle, 1=investigating, 2=combat
+        self.investigation_point = None
+        self.investigation_timer = 0
+        
         # Debug information
         self._has_los = False
         self._los_point = None
         self._in_cone = False
+        self._alerted_by_ally = False
     
     def update_vision_cone(self, player_pos):
         """Update facing direction based on player position"""
@@ -73,12 +80,52 @@ class VisionComponent:
         )
         has_los = in_cone and los_clear(level, entity_pos, player_pos)
         
+        # Broadcast alert if we see the player
+        if has_los:
+            alert_system.broadcast_alert(self.entity, player_pos, alert_level=2)
+            self.alert_level = 2
+            self._alerted_by_ally = False
+        else:
+            # Check if allies have alerted us
+            self._check_ally_alerts()
+        
         # Store for debug drawing
         self._has_los = has_los
         self._los_point = player_pos
         self._in_cone = in_cone
         
         return has_los, in_cone
+    
+    def _check_ally_alerts(self):
+        """Check if nearby allies have spotted the player"""
+        has_alert, alert_pos, alert_level = alert_system.check_nearby_alerts(self.entity)
+        
+        if has_alert:
+            # Ally spotted player - investigate that position
+            if self.alert_level < alert_level:
+                self.alert_level = alert_level
+                self.investigation_point = alert_pos
+                self.investigation_timer = 120  # Investigate for 2 seconds
+                self._alerted_by_ally = True
+                
+                # Visual feedback
+                if hasattr(self.entity, 'tele_text'):
+                    self.entity.tele_text = '?!' if alert_level == 2 else '?'
+        elif self.investigation_timer > 0:
+            # Continue investigating
+            self.investigation_timer -= 1
+            if self.investigation_timer == 0:
+                self.alert_level = 0
+                self.investigation_point = None
+                self._alerted_by_ally = False
+    
+    def is_investigating(self):
+        """Check if entity is currently investigating an alert"""
+        return self.alert_level == 1 and self.investigation_point is not None
+    
+    def is_in_combat(self):
+        """Check if entity is in combat mode"""
+        return self.alert_level == 2
     
     def get_distance_to_player(self, player_pos):
         """Calculate distance to player"""

@@ -12,7 +12,8 @@ from config import (
     DASH_SPEED, DASH_TIME, DASH_COOLDOWN, INVINCIBLE_FRAMES,
     DOUBLE_JUMPS,
     ATTACK_COOLDOWN, ATTACK_LIFETIME, COMBO_RESET, SWORD_DAMAGE,
-    POGO_BOUNCE_VY, ACCENT, GREEN, CYAN, RED, WHITE, IFRAME_BLINK_INTERVAL
+    POGO_BOUNCE_VY, ACCENT, GREEN, CYAN, RED, WHITE, IFRAME_BLINK_INTERVAL,
+    TILE
 )
 from src.core.utils import los_clear, find_intermediate_visible_point, find_idle_patrol_target
 from src.entities.entity_common import Hitbox, DamageNumber, hitboxes, floating, in_vision_cone
@@ -957,6 +958,11 @@ class Boss(Enemy):
 
         self.handle_movement(level, player)
         self.handle_gravity(level)
+        
+        # Update facing direction based on movement
+        if abs(self.vx) > 0.1:
+            self.facing = 1 if self.vx > 0 else -1
+            self.facing_angle = 0 if self.facing > 0 else math.pi
 
         self.x = float(self.rect.centerx)
         self.y = float(self.rect.bottom)
@@ -1518,6 +1524,11 @@ class WizardCaster(Enemy):
         from ..ai.enemy_movement import clamp_enemy_to_level
         self.handle_movement(level, player)
         clamp_enemy_to_level(self, level, respect_solids=True)
+        
+        # Update facing direction based on player position
+        if has_los and dist_to_player < self.vision_range:
+            self.facing = 1 if ppos[0] > epos[0] else -1
+            self.facing_angle = 0 if self.facing > 0 else math.pi
 
         self.x = float(self.rect.centerx)
         self.y = float(self.rect.centery)
@@ -1534,19 +1545,100 @@ class Assassin(Enemy):
             'max_hp': 20,
             'money_drop': (20, 35)
         }
-        super().__init__(x, ground_y, width=28, height=22, combat_config=combat_config,
+        super().__init__(x, ground_y, width=40, height=40, combat_config=combat_config,
                         vision_range=240, cone_half_angle=math.pi/4, turn_rate=0.06)  # Wider vision cone (45 degrees)
         # Assassin-specific properties
         self.state = 'idle'
         # Expose attributes expected by validation/tests.
         self.type = "Assassin"
         self.tele_t = 0
+        self.tele_text = ''
         self.cool = 0
         self.action = None  # 'dash' or 'slash'
         self.dash_t = 0
         self.base_speed = 2.0
         self.can_jump = True
         self.jump_cooldown = 0  # Prevent continuous jumping
+        self.attacking = False
+        
+        # Initialize animation system
+        from src.entities.animation_system import AnimationManager, AnimationState
+        self.anim_manager = AnimationManager(self, default_state=AnimationState.IDLE)
+        self.anim_manager.set_sprite_offset_y(0)
+        
+        # Sprite size for assassin (32x32 for better hitbox match)
+        sprite_size = (48, 48)
+        
+        # Load idle animation (4 frames)
+        self.anim_manager.load_animation(
+            AnimationState.IDLE,
+            [
+                "assets/enemy/assasin/idle-assasin/idle-1.png",
+                "assets/enemy/assasin/idle-assasin/idle-2.png",
+                "assets/enemy/assasin/idle-assasin/idle-3.png",
+                "assets/enemy/assasin/idle-assasin/idle-4.png"
+            ],
+            sprite_size=sprite_size,
+            frame_duration=8,
+            loop=True,
+            priority=0
+        )
+        
+        # Load run animation (6 frames)
+        self.anim_manager.load_animation(
+            AnimationState.RUN,
+            [
+                "assets/enemy/assasin/run-assasin/run-1.png",
+                "assets/enemy/assasin/run-assasin/run-2.png",
+                "assets/enemy/assasin/run-assasin/run-3.png",
+                "assets/enemy/assasin/run-assasin/run-4.png",
+                "assets/enemy/assasin/run-assasin/run-5.png",
+                "assets/enemy/assasin/run-assasin/run-6.png"
+            ],
+            sprite_size=sprite_size,
+            frame_duration=4,
+            loop=True,
+            priority=5
+        )
+        
+        # Load attack animation (5 frames)
+        def on_attack_complete():
+            self.attacking = False
+            # Ensure we transition to appropriate animation after attack
+            # This will be handled in the main animation update logic
+        
+        self.anim_manager.load_animation(
+            AnimationState.ATTACK,
+            [
+                "assets/enemy/assasin/attk-assasin/attk-1.png",
+                "assets/enemy/assasin/attk-assasin/attk-2.png",
+                "assets/enemy/assasin/attk-assasin/attk-3.png",
+                "assets/enemy/assasin/attk-assasin/attk-4.png",
+                "assets/enemy/assasin/attk-assasin/attk-5.png"
+            ],
+            sprite_size=sprite_size,
+            frame_duration=3,
+            loop=False,
+            priority=10,
+            next_state=AnimationState.IDLE,
+            on_complete_callback=on_attack_complete
+        )
+        
+        # Load dash attack animation (5 frames)
+        self.anim_manager.load_animation(
+            AnimationState.DASH,
+            [
+                "assets/enemy/assasin/dash-attk-assasin/dash-attk-1.png",
+                "assets/enemy/assasin/dash-attk-assasin/dash-attk-2.png",
+                "assets/enemy/assasin/dash-attk-assasin/dash-attk-3.png",
+                "assets/enemy/assasin/dash-attk-assasin/dash-attk-4.png",
+                "assets/enemy/assasin/dash-attk-assasin/dash-attk-5.png"
+            ],
+            sprite_size=sprite_size,
+            frame_duration=3,
+            loop=True,  # Keep looping during dash duration
+            priority=15
+        )
     
     def _get_terrain_traits(self):
         """Assassin can move through narrow spaces and jump"""
@@ -1578,9 +1670,14 @@ class Assassin(Enemy):
         self._in_cone = in_cone
          
         from ..ai.enemy_movement import clamp_enemy_to_level
+        from src.entities.animation_system import AnimationState
          
         if self.tele_t > 0:
             self.tele_t -= 1
+            # Play telegraph animation (use idle but could add specific telegraph state)
+            if self.tele_t > 0:
+                self.anim_manager.play(AnimationState.IDLE, force=True)
+            
             if self.tele_t == 0:
                 if self.action == 'dash':
                     dx = ppos[0] - epos[0]
@@ -1592,7 +1689,13 @@ class Assassin(Enemy):
                     self.dash_t = 18
                     self.state = 'dash'
                     self.facing = 1 if self.vx >= 0 else -1
+                    # Start dash animation
+                    self.anim_manager.play(AnimationState.DASH, force=True)
                 elif self.action == 'slash':
+                    # Start attack animation
+                    self.attacking = True
+                    self.anim_manager.play(AnimationState.ATTACK, force=True)
+                    
                     hb = pygame.Rect(0, 0, int(self.rect.w * 1.2), int(self.rect.h * 0.7))
                     if self.facing > 0:
                         hb.midleft = (self.rect.right, self.rect.centery)
@@ -1647,6 +1750,8 @@ class Assassin(Enemy):
                 self.vx *= 0.6
                 if abs(self.vx) < 0.8:
                     self.vx = 0
+                # Force transition back to idle animation when dash ends
+                self.anim_manager.play(AnimationState.IDLE, force=True)
                 return
         elif has_los and self.cool == 0 and dist_to_player < self.vision_range:
             import random
@@ -1668,6 +1773,9 @@ class Assassin(Enemy):
                 
                 if abs(dx) > 5:
                     self.vx = 2.0 if dx > 0 else -2.0
+                    # Update facing while pursuing
+                    self.facing = 1 if dx > 0 else -1
+                    self.facing_angle = 0 if self.facing > 0 else math.pi
                 else:
                     self.vx = 0
                     
@@ -1686,23 +1794,86 @@ class Assassin(Enemy):
                     dy_inv = inv_y - epos[1]
                     if abs(dx_inv) > 20:
                         self.vx = 2.0 if dx_inv > 0 else -2.0
+                        # Update facing while investigating
+                        self.facing = 1 if dx_inv > 0 else -1
+                        self.facing_angle = 0 if self.facing > 0 else math.pi
                     else:
                         self.vx = 0
                 else:
                     self.vx = 0
             else:
-                # Idle patrol
+                # Idle patrol with stable direction changes
                 import random as rnd
-                if not hasattr(self, 'patrol_direction') or rnd.random() < 0.02:
-                    self.patrol_direction = rnd.choice([-1.5, 0, 1.5])
+                
+                # Initialize patrol state if needed
+                if not hasattr(self, 'patrol_direction'):
+                    self.patrol_direction = rnd.choice([-1.5, 1.5])  # Start moving
+                    self.patrol_timer = rnd.randint(45, 90)  # Hold direction for 0.75-1.5 seconds
+                
+                # Count down patrol timer
+                if not hasattr(self, 'patrol_timer'):
+                    self.patrol_timer = 60
+                
+                self.patrol_timer -= 1
+                
+                # Only change direction when timer expires
+                if self.patrol_timer <= 0:
+                    self.patrol_direction = rnd.choice([-1.5, 0, 1.5])  # Can stand still occasionally
+                    self.patrol_timer = rnd.randint(45, 90)
                 
                 self.vx = self.patrol_direction
-                if self.vx == 0:
-                    self.vx = rnd.choice([-1.0, 1.0]) * 0.5
+                
+                # Update facing based on current movement direction (smooth updates)
+                if abs(self.vx) > 0.1:
+                    self.facing = 1 if self.vx > 0 else -1
+                    self.facing_angle = 0 if self.facing > 0 else math.pi
             
+            # Apply horizontal movement
+            old_rect = self.rect.copy()
+            self.rect.x += int(self.vx)
+            
+            # Handle horizontal collisions
+            for s in level.solids:
+                if self.rect.colliderect(s):
+                    if self.vx > 0 and old_rect.right <= s.left:
+                        self.rect.right = s.left
+                        self.vx = 0
+                        # Reverse patrol direction when hitting wall
+                        if alert_level == 0:
+                            self.patrol_direction *= -1
+                    elif self.vx < 0 and old_rect.left >= s.right:
+                        self.rect.left = s.right
+                        self.vx = 0
+                        # Reverse patrol direction when hitting wall
+                        if alert_level == 0:
+                            self.patrol_direction *= -1
+            
+            # Apply gravity and vertical movement
             if self.gravity_affected:
                 self.handle_gravity(level)
+            
             clamp_enemy_to_level(self, level, respect_solids=False)
+        
+        # Update animation state based on behavior
+        # Improved animation state management with proper transitions
+        if self.state == 'dash':
+            # Keep dash animation playing during dash
+            if self.anim_manager.current_state != AnimationState.DASH:
+                self.anim_manager.play(AnimationState.DASH, force=True)
+        elif self.attacking:
+            # Let attack animation complete naturally - don't interrupt
+            pass
+        elif abs(self.vx) > 0.8:
+            # Running
+            if self.anim_manager.current_state != AnimationState.RUN:
+                self.anim_manager.play(AnimationState.RUN)
+        else:
+            # Idle
+            if self.anim_manager.current_state != AnimationState.IDLE:
+                self.anim_manager.play(AnimationState.IDLE, force=True)
+        
+        # Update animation system
+        self.anim_manager.update()
          
         self.x = float(self.rect.centerx)
         self.y = float(self.rect.bottom)
@@ -1714,6 +1885,38 @@ class Assassin(Enemy):
             return (60,60,80) if not self.combat.is_invincible() else (40,40,60)
         else:
             return (30,30,40) if not self.combat.is_invincible() else (20,20,30)
+    
+    def draw(self, surf, camera, show_los=False, show_nametags=False, debug_hitboxes=False):
+        """Custom draw with sprite animations and semi-invisibility effect"""
+        if not self.combat.alive:
+            return
+        
+        # Draw debug vision cone
+        self.draw_debug_vision(surf, camera, show_los)
+        
+        # Draw sprite with animation
+        sprite_drawn = self.anim_manager.draw(surf, camera, show_invincibility=True)
+        
+        # Fallback to colored rect if sprite failed (with semi-invisibility)
+        if not sprite_drawn:
+            base_color = self.get_base_color()
+            status_color = self.get_status_effect_color(base_color)
+            pygame.draw.rect(surf, status_color, camera.to_screen_rect(self.rect), border_radius=5)
+        
+        # Draw collision box outline in debug mode (F3)
+        if debug_hitboxes:
+            pygame.draw.rect(surf, (255, 140, 0), camera.to_screen_rect(self.rect), width=2)
+        
+        # Draw status effect indicators
+        self.draw_status_effects(surf, camera)
+        
+        # Draw telegraph
+        if getattr(self, 'tele_t', 0) > 0 and getattr(self, 'tele_text', ''):
+            from src.core.utils import draw_text
+            draw_text(surf, self.tele_text, camera.to_screen((self.rect.centerx-4, self.rect.top-10)), (255,200,80), size=18, bold=True)
+        
+        # Draw nametag
+        self.draw_nametag(surf, camera, show_nametags)
 
 
 class Bee(Enemy):
@@ -1780,6 +1983,11 @@ class Bee(Enemy):
         from ..ai.enemy_movement import clamp_enemy_to_level
         self.handle_movement(level, player)
         clamp_enemy_to_level(self, level, respect_solids=True)
+        
+        # Update facing direction based on movement
+        if abs(self.vx) > 0.1:
+            self.facing = 1 if self.vx > 0 else -1
+            self.facing_angle = 0 if self.facing > 0 else math.pi
 
         self.x = float(self.rect.centerx)
         self.y = float(self.rect.centery)
@@ -2068,7 +2276,13 @@ class Golem(Enemy):
         self.draw_nametag(surf, camera, show_nametags)
 
 class KnightMonster(Enemy):
-    """Elite melee enemy with combo attacks, parry, and evasive dodges."""
+    """Elite melee enemy with combo attacks, parry, evasive dodges, jumping, and double-dash abilities.
+    
+    Advanced AI features:
+    - Explores entire map (not just back-and-forth patrol)
+    - Pathfinding to reach different platforms
+    - Responds immediately to allied alerts
+    """
     def __init__(self, x, ground_y):
         combat_config = {
             'max_hp': 28,
@@ -2080,7 +2294,7 @@ class KnightMonster(Enemy):
         
         # KnightMonster-specific properties
         self.type = "KnightMonster"
-        self.state = 'idle'  # idle, windup, combo, dash_evade, parry, recover
+        self.state = 'idle'  # idle, windup, combo, dash_evade, parry, recover, exploring, pathfinding
         self.cool = 0
         self.windup_t = 0
         self.combo_len = 0
@@ -2107,7 +2321,34 @@ class KnightMonster(Enemy):
         self._prev_player_attacking = False
         
         self.base_speed = 1.0
-        self.can_jump = False
+        self.can_jump = True  # Enable jumping
+        
+        # Jump mechanics (similar to player)
+        self.jump_power = -10.0  # Negative = upward
+        self.double_jumps_max = 1  # Can double jump once
+        self.double_jumps_remaining = 1
+        self.jump_cooldown = 0  # Frames before can jump again
+        
+        # Dash mechanics (double dash like player)
+        self.dash_charges = 2  # Can dash twice
+        self.dash_charges_max = 2
+        self.dash_speed = 12.0  # Same as player
+        self.dash_time = 10  # Frames dash lasts
+        self.dashing_frames = 0  # Current dash timer
+        self.dash_cooldown = 0  # Cooldown between dashes
+        self.dash_direction = 0  # Direction of current dash
+        
+        # Exploration system - visit entire map
+        self.exploration_mode = True  # Always exploring when not in combat
+        self.exploration_targets = []  # List of positions to visit
+        self.current_target = None  # Current exploration waypoint
+        self.visited_positions = set()  # Track visited areas
+        self.stuck_timer = 0  # Detect if stuck
+        self.last_position = (x, ground_y)
+        
+        # Pathfinding for reaching platforms
+        self.path_to_target = []  # List of waypoints to follow
+        self.pathfinding_cooldown = 0  # Cooldown before recalculating path
     
     def _get_terrain_traits(self):
         """KnightMonster is a ground-based fighter"""
@@ -2140,6 +2381,23 @@ class KnightMonster(Enemy):
             self.parry_cool -= 1
         if self.parry_window > 0:
             self.parry_window -= 1
+        if self.jump_cooldown > 0:
+            self.jump_cooldown -= 1
+        if self.dash_cooldown > 0:
+            self.dash_cooldown -= 1
+        
+        # Update dash state
+        if self.dashing_frames > 0:
+            self.dashing_frames -= 1
+            if self.dashing_frames == 0:
+                self.vx = 0  # Stop dashing
+        
+        # Reset double jumps when on ground
+        if self.on_ground:
+            self.double_jumps_remaining = self.double_jumps_max
+            # Recharge dash charges when on ground
+            if self.dash_charges < self.dash_charges_max and self.dash_cooldown == 0:
+                self.dash_charges = self.dash_charges_max
         
         epos = (self.rect.centerx, self.rect.centery)
         ppos = (player.rect.centerx, player.rect.centery)
@@ -2164,6 +2422,18 @@ class KnightMonster(Enemy):
             if has_los and dist < self.evade_trigger_dist and self.cool == 0 and random.random() < 0.10:
                 self._start_evade_away_from(dx, dy, immortal=True)
         self._prev_player_attacking = player_attacking_now
+        
+        # CHECK FOR ALLIED ALERTS - Immediate response to combat
+        from src.entities.entity_common import alert_system
+        has_alert, alert_pos, alert_level = alert_system.check_nearby_alerts(self)
+        if has_alert and alert_pos and not has_los:
+            # Ally spotted player! Navigate there immediately
+            self.current_target = alert_pos
+            self.tele_text = '!!'
+            # Override position to investigate alert
+            ppos = alert_pos
+            dx, dy = ppos[0] - epos[0], ppos[1] - epos[1]
+            dist = (dx*dx + dy*dy) ** 0.5
         
         # ---- State machine ----
         # Skip AI decisions if stunned or frozen
@@ -2201,6 +2471,12 @@ class KnightMonster(Enemy):
                 self._start_combo()
             elif has_los and dist < self.min_combo_dist and self.parry_cool == 0 and random.random() < 0.03:
                 self._start_parry()
+            elif has_los and dist > self.max_combo_dist and dist < 400:
+                # Player is far away but visible - use mobility to approach
+                self._advanced_approach(dx, dy, dist, level)
+            else:
+                # EXPLORATION MODE - Navigate entire map
+                self._explore_map(level, epos)
         
         elif self.state == 'windup':
             if self.windup_t == 0:
@@ -2266,6 +2542,11 @@ class KnightMonster(Enemy):
                 if self.rect.bottom > s.top and self.rect.centery < s.centery:
                     self.rect.bottom = s.top
                     self.vy = 0.0
+        
+        # Update facing direction toward player when has LOS
+        if has_los and abs(dx) > 5:
+            self.facing = 1 if dx > 0 else -1
+            self.facing_angle = 0 if self.facing > 0 else math.pi
         
         # Update position tracking
         self.x = float(self.rect.centerx)
@@ -2338,6 +2619,215 @@ class KnightMonster(Enemy):
             knockback_x = (1 if player.rect.centerx > self.rect.centerx else -1) * 3
             knockback_y = -6
             player.combat.take_damage(0, (knockback_x, knockback_y), self)
+    
+    def _perform_jump(self):
+        """Perform a jump (or double jump if in air)"""
+        if self.on_ground and self.jump_cooldown == 0:
+            # Ground jump
+            self.vy = self.jump_power
+            self.on_ground = False
+            self.jump_cooldown = 10
+            self.tele_text = '↑'
+        elif not self.on_ground and self.double_jumps_remaining > 0:
+            # Double jump
+            self.vy = self.jump_power * 0.9  # Slightly weaker double jump
+            self.double_jumps_remaining -= 1
+            self.tele_text = '⇈'
+    
+    def _perform_dash(self, direction):
+        """Perform a dash in the given direction (1=right, -1=left)"""
+        if self.dash_charges > 0 and self.dash_cooldown == 0:
+            self.vx = direction * self.dash_speed
+            self.dashing_frames = self.dash_time
+            self.dash_direction = direction
+            self.dash_charges -= 1
+            self.dash_cooldown = 30  # 0.5 second cooldown
+            self.facing = direction
+            self.facing_angle = 0 if direction > 0 else math.pi
+            self.tele_text = '»' if direction > 0 else '«'
+    
+    def _advanced_approach(self, dx, dy, dist, level):
+        """Use advanced mobility (jump/dash) to approach player"""
+        # Move toward player
+        move_dir = 1 if dx > 0 else -1
+        self.vx = move_dir * 2.0
+        
+        # Jump over obstacles or to reach player at different height
+        if dy < -40 and self.on_ground and self.jump_cooldown == 0:
+            # Player is above, jump toward them
+            self._perform_jump()
+        
+        # Use dash to close distance quickly (20% chance per frame when far)
+        if dist > 150 and random.random() < 0.02 and self.dash_charges > 0 and self.dash_cooldown == 0:
+            self._perform_dash(move_dir)
+        
+        # Update facing
+        self.facing = move_dir
+        self.facing_angle = 0 if move_dir > 0 else math.pi
+    
+    def _explore_map(self, level, epos):
+        """Exploration AI - Wander entire map and find paths to different platforms"""
+        # Check if stuck (not moving)
+        current_pos = (self.rect.centerx, self.rect.centery)
+        if abs(current_pos[0] - self.last_position[0]) < 2 and abs(current_pos[1] - self.last_position[1]) < 2:
+            self.stuck_timer += 1
+        else:
+            self.stuck_timer = max(0, self.stuck_timer - 1)  # Gradually decrease when moving
+        self.last_position = current_pos
+        
+        # If stuck for too long, try to unstuck with jump/dash
+        if self.stuck_timer > 15:  # Reduced from 20 to 15 for even faster unstuck response
+            if self.on_ground and self.jump_cooldown == 0:
+                self._perform_jump()
+                # Jump in opposite direction to get away from wall
+                if self.vx != 0:
+                    self.vx = -self.vx * 2
+                else:
+                    self.vx = random.choice([-3, 3])
+                self.stuck_timer = 0
+                self.current_target = None  # Force new target
+            elif self.dash_charges > 0 and self.dash_cooldown == 0:
+                # Dash in opposite direction or random if no vx
+                dash_dir = -1 if self.vx > 0 else 1 if self.vx < 0 else random.choice([-1, 1])
+                self._perform_dash(dash_dir)
+                self.stuck_timer = 0
+                self.current_target = None  # Force new target
+            elif self.stuck_timer > 40:  # Reduced from 60
+                # Really stuck - force new target and stop moving
+                self.vx = 0
+                self.current_target = None
+                self.stuck_timer = 0
+        
+        # Find new exploration target if needed
+        if self.current_target is None or self._reached_target(epos):
+            self.current_target = self._find_exploration_target(level, epos)
+            self.visited_positions.add((int(epos[0] // 48), int(epos[1] // 48)))  # Mark 48px grid as visited
+        
+        if self.current_target:
+            # Navigate to target using pathfinding
+            self._navigate_to_target(level, epos, self.current_target)
+    
+    def _find_exploration_target(self, level, current_pos):
+        """Find next unvisited area to explore"""
+        # Generate potential targets across the map
+        candidates = []
+        level_width = level.w * TILE
+        level_height = level.h * TILE if hasattr(level, 'h') else 600
+        
+        # Sample points across the level
+        for _ in range(20):
+            tx = random.randint(48, level_width - 48)
+            ty = random.randint(48, level_height - 48)
+            grid_pos = (int(tx // 48), int(ty // 48))
+            
+            # Check if target is inside a wall - skip if so
+            test_rect = pygame.Rect(tx - 10, ty - 10, 20, 20)
+            inside_wall = any(test_rect.colliderect(s) for s in level.solids)
+            
+            # Prefer unvisited locations that aren't inside walls
+            if grid_pos not in self.visited_positions and not inside_wall:
+                candidates.append((tx, ty))
+        
+        # If all explored or all inside walls, pick random valid location
+        if not candidates:
+            # Try to find any valid non-wall location
+            for _ in range(10):
+                tx = random.randint(48, level_width - 48)
+                ty = random.randint(48, level_height - 48)
+                test_rect = pygame.Rect(tx - 10, ty - 10, 20, 20)
+                inside_wall = any(test_rect.colliderect(s) for s in level.solids)
+                if not inside_wall:
+                    return (tx, ty)
+            # Fallback to current position if can't find valid target
+            return current_pos
+        
+        # Pick farthest unvisited location
+        best_target = max(candidates, key=lambda p: abs(p[0] - current_pos[0]) + abs(p[1] - current_pos[1]))
+        return best_target
+    
+    def _reached_target(self, pos):
+        """Check if reached current target"""
+        if not self.current_target:
+            return True
+        dx = self.current_target[0] - pos[0]
+        dy = self.current_target[1] - pos[1]
+        dist = (dx*dx + dy*dy) ** 0.5
+        return dist < 32  # Within 32 pixels = reached
+    
+    def _navigate_to_target(self, level, current_pos, target_pos):
+        """Navigate to target using jumps and dashes to overcome obstacles"""
+        dx = target_pos[0] - current_pos[0]
+        dy = target_pos[1] - current_pos[1]
+        
+        # Move horizontally toward target
+        move_dir = 1 if dx > 0 else -1
+        
+        # Check for obstacles ahead with better detection
+        check_dist = 32  # Increased detection distance
+        ahead_x = self.rect.centerx + (move_dir * check_dist)
+        probe_wall = pygame.Rect(ahead_x - 2, self.rect.centery - 10, 4, 20)
+        probe_floor = pygame.Rect(ahead_x - 2, self.rect.bottom + 1, 4, 3)
+        
+        # Also check if we're currently touching a wall
+        touching_wall_rect = pygame.Rect(
+            self.rect.right if move_dir > 0 else self.rect.left - 2,
+            self.rect.centery - 10,
+            2,
+            20
+        )
+        currently_touching_wall = any(touching_wall_rect.colliderect(s) for s in level.solids)
+        
+        wall_ahead = any(probe_wall.colliderect(s) for s in level.solids) or currently_touching_wall
+        floor_ahead = any(probe_floor.colliderect(s) for s in level.solids)
+        
+        # Pathfinding logic
+        if wall_ahead:
+            # Wall blocking ahead - stop immediately and try to overcome
+            if self.on_ground and self.jump_cooldown == 0:
+                # Try to jump over it
+                self._perform_jump()
+                self.vx = move_dir * 3.0
+            elif self.on_ground and self.dash_charges > 0 and self.dash_cooldown == 0:
+                # Can't jump but can dash - try dashing
+                self._perform_dash(move_dir)
+            else:
+                # Can't jump or dash - STOP and pick new target
+                self.vx = 0
+                # Increment stuck timer to trigger unstuck logic sooner
+                self.stuck_timer += 1
+                # If stuck for a bit, give up on this target
+                if self.stuck_timer > 10:
+                    self.current_target = None
+        elif not floor_ahead and abs(dx) > 48:
+            # Gap ahead
+            if self.on_ground and self.jump_cooldown == 0:
+                # Jump across the gap
+                self._perform_jump()
+                self.vx = move_dir * 4.0
+                # Use dash mid-air if gap is large
+                if abs(dx) > 96 and self.dash_charges > 0 and self.dash_cooldown == 0:
+                    self._perform_dash(move_dir)
+            else:
+                # Can't jump - stop at edge
+                self.vx = 0
+        elif dy < -48 and self.on_ground and abs(dx) < 32 and self.jump_cooldown == 0:
+            # Target is above - jump up
+            self._perform_jump()
+            self.vx = move_dir * 1.5
+        elif abs(dx) > 96 and self.dash_charges > 0 and self.dash_cooldown == 0 and self.on_ground:
+            # Far away - dash to close distance faster
+            self._perform_dash(move_dir)
+        else:
+            # Normal movement - only if no wall blocking and not dashing
+            if self.dashing_frames == 0 and not wall_ahead:  # Don't override dash or move into walls
+                self.vx = move_dir * 2.5
+            elif wall_ahead:
+                # Safety: if wall detected, stop
+                self.vx = 0
+        
+        # Update facing
+        self.facing = move_dir
+        self.facing_angle = 0 if move_dir > 0 else math.pi
     
     # -------------- Combat Overrides --------------
     

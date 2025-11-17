@@ -131,6 +131,9 @@ class GroundPatrolStrategy(MovementStrategy):
         # Simple pathfinding - move toward player
         if abs(dx) > 5:
             enemy.vx = 1.8 if dx > 0 else -1.8
+            # Update facing direction
+            enemy.facing = 1 if dx > 0 else -1
+            enemy.facing_angle = 0 if enemy.facing > 0 else math.pi
         else:
             enemy.vx = 0
         
@@ -156,10 +159,17 @@ class GroundPatrolStrategy(MovementStrategy):
             else:
                 # Move toward target
                 enemy.vx = 1.2 if dx > 0 else -1.2
+                # Update facing direction
+                enemy.facing = 1 if dx > 0 else -1
+                enemy.facing_angle = 0 if enemy.facing > 0 else math.pi
         else:
             # Random wandering
             if random.random() < 0.02:  # 2% chance to change direction
                 enemy.vx = random.choice([-1.2, 0, 1.2])
+                if enemy.vx != 0:
+                    # Update facing when changing direction
+                    enemy.facing = 1 if enemy.vx > 0 else -1
+                    enemy.facing_angle = 0 if enemy.facing > 0 else math.pi
     
     def _find_patrol_target(self, enemy, level):
         """Find a suitable patrol target"""
@@ -264,6 +274,11 @@ class JumpingStrategy(MovementStrategy):
         enemy.vx = math.cos(angle) * jump_power * 0.7
         enemy.vy = math.sin(angle) * jump_power * 0.7 - 8  # Extra upward force
         enemy.on_ground = False
+        
+        # Update facing direction
+        if abs(dx) > 5:
+            enemy.facing = 1 if dx > 0 else -1
+            enemy.facing_angle = 0 if enemy.facing > 0 else math.pi
     
     def _random_hop(self, enemy):
         """Random hop in a direction"""
@@ -273,6 +288,11 @@ class JumpingStrategy(MovementStrategy):
         enemy.vx = math.cos(angle) * hop_power
         enemy.vy = -8  # Upward jump
         enemy.on_ground = False
+        
+        # Update facing direction based on hop direction
+        if abs(enemy.vx) > 1:
+            enemy.facing = 1 if enemy.vx > 0 else -1
+            enemy.facing_angle = 0 if enemy.facing > 0 else math.pi
     
     def _handle_jump_physics(self, enemy, level):
         """Handle physics for jumping enemies"""
@@ -405,6 +425,9 @@ class RangedTacticalStrategy(MovementStrategy):
                 
                 if enemy.patrol_direction != 0:
                     desired_vx = enemy.patrol_direction * 1.2  # Must be >= 1.0 for int() to work
+                    # Update facing direction during patrol
+                    enemy.facing = enemy.patrol_direction
+                    enemy.facing_angle = 0 if enemy.facing > 0 else 3.14159
                 else:
                     desired_vx = 0
 
@@ -649,16 +672,32 @@ class FloatingStrategy(MovementStrategy):
                 # Too close, drift away horizontally from player
                 dx = epos[0] - ppos[0]
                 enemy.vx = 1.4 if dx > 0 else -1.4
+                # Update facing direction
+                if abs(dx) > 5:
+                    enemy.facing = 1 if dx > 0 else -1
+                    enemy.facing_angle = 0 if enemy.facing > 0 else 3.14159
             elif distance > 260:
                 # Too far, drift toward player
                 dx = ppos[0] - epos[0]
                 enemy.vx = 1.0 if dx > 0 else -1.0
+                # Update facing direction
+                if abs(dx) > 5:
+                    enemy.facing = 1 if dx > 0 else -1
+                    enemy.facing_angle = 0 if enemy.facing > 0 else 3.14159
             else:
                 # In a good band, mild oscillation
                 enemy.vx = math.sin(pygame.time.get_ticks() * 0.001) * 0.9
+                # Update facing based on oscillation direction
+                if abs(enemy.vx) > 0.1:
+                    enemy.facing = 1 if enemy.vx > 0 else -1
+                    enemy.facing_angle = 0 if enemy.facing > 0 else 3.14159
         else:
             # Idle gentle hover
             enemy.vx = math.sin(pygame.time.get_ticks() * 0.0008) * 1.2
+            # Update facing based on hover direction
+            if abs(enemy.vx) > 0.1:
+                enemy.facing = 1 if enemy.vx > 0 else -1
+                enemy.facing_angle = 0 if enemy.facing > 0 else 3.14159
         
         # Integrate movement
         old_rect = enemy.rect.copy()
