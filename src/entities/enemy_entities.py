@@ -24,6 +24,105 @@ from src.entities.components.combat_component import CombatComponent
 logger = logging.getLogger(__name__)
 
 
+class ChargeAttackSystem:
+    """
+    Unified charge-before-attack system for ranged enemies.
+    Similar to Bee's two-phase attack system: charge -> shoot -> cooldown.
+    
+    Usage:
+        # In enemy __init__:
+        self.charge_system = ChargeAttackSystem(
+            charge_duration=60,  # 1 second at 60 FPS
+            cooldown_duration=60,  # 1 second cooldown
+            charge_animation=AnimationState.CHARGE
+        )
+        
+        # In enemy tick():
+        if self.charge_system.update():
+            # Spawn projectile here
+            spawn_projectile()
+    """
+    
+    def __init__(self, charge_duration: int, cooldown_duration: int, charge_animation=None):
+        """
+        Initialize charge attack system.
+        
+        Args:
+            charge_duration: Frames to charge before attack (60 = 1 second at 60 FPS)
+            cooldown_duration: Frames to wait after attack before next attack
+            charge_animation: Optional AnimationState to play during charge
+        """
+        self.charge_duration = charge_duration
+        self.cooldown_duration = cooldown_duration
+        self.charge_animation = charge_animation
+        
+        self.phase = None  # None, 'charging', or 'cooldown'
+        self.timer = 0
+        self.projectile_spawned = False
+    
+    def start_charge(self):
+        """Start charging for an attack."""
+        if self.phase is None:
+            self.phase = 'charging'
+            self.timer = 0
+            self.projectile_spawned = False
+            return True
+        return False
+    
+    def update(self) -> bool:
+        """
+        Update charge system. Call every frame.
+        
+        Returns:
+            True when projectile should be spawned (at end of charge phase)
+        """
+        if self.phase == 'charging':
+            self.timer += 1
+            
+            # Time to spawn projectile
+            if self.timer >= self.charge_duration and not self.projectile_spawned:
+                self.projectile_spawned = True
+                # Transition to cooldown
+                self.phase = 'cooldown'
+                self.timer = 0
+                return True  # Signal to spawn projectile
+        
+        elif self.phase == 'cooldown':
+            self.timer += 1
+            
+            # Cooldown complete
+            if self.timer >= self.cooldown_duration:
+                self.phase = None
+                self.timer = 0
+                self.projectile_spawned = False
+        
+        return False
+    
+    def is_charging(self) -> bool:
+        """Check if currently in charge phase."""
+        return self.phase == 'charging'
+    
+    def is_cooldown(self) -> bool:
+        """Check if currently in cooldown phase."""
+        return self.phase == 'cooldown'
+    
+    def is_ready(self) -> bool:
+        """Check if ready to start new attack (not charging or on cooldown)."""
+        return self.phase is None
+    
+    def get_charge_progress(self) -> float:
+        """Get charge progress (0.0 to 1.0)."""
+        if self.phase == 'charging':
+            return min(1.0, self.timer / self.charge_duration)
+        return 0.0
+    
+    def reset(self):
+        """Reset the system to idle state."""
+        self.phase = None
+        self.timer = 0
+        self.projectile_spawned = False
+
+
 class Enemy:
     """Base class for all enemy types with shared functionality."""
     
@@ -1350,6 +1449,12 @@ class Archer(Enemy):
         self.attacking = False
         self.arrow_spawned = False
         
+        # Charge attack system: 1s charge, 1s cooldown (60 FPS = 1 second)
+        self.charge_system = ChargeAttackSystem(
+            charge_duration=60,  # 1 second charge
+            cooldown_duration=60  # 1 second cooldown
+        )
+        
         # Initialize animation system
         from src.entities.animation_system import AnimationManager, AnimationState
         self.anim_manager = AnimationManager(self, default_state=AnimationState.IDLE)
@@ -1389,28 +1494,41 @@ class Archer(Enemy):
             priority=5
         )
         
-        # Load attack animation (7 frames, returns to idle)
-        def on_attack_complete():
-            """Called when attack animation finishes"""
+        # Load charge animation (6 frames, drawing bow back - 1 second total)
+        # 60 frames / 6 animation frames = 10 frames per sprite
+        self.anim_manager.load_animation(
+            AnimationState.CHARGE,
+            [
+                "assets/enemy/Archer-enemy/attk-archer-monster/charge/attk-1.png",
+                "assets/enemy/Archer-enemy/attk-archer-monster/charge/attk-2.png",
+                "assets/enemy/Archer-enemy/attk-archer-monster/charge/attk-3.png",
+                "assets/enemy/Archer-enemy/attk-archer-monster/charge/attk-4.png",
+                "assets/enemy/Archer-enemy/attk-archer-monster/charge/attk-5.png",
+                "assets/enemy/Archer-enemy/attk-archer-monster/charge/attk-6.png"
+            ],
+            sprite_size=sprite_size,
+            frame_duration=10,  # 6 frames × 10 = 60 frames = 1 second
+            loop=False,
+            priority=10,
+            next_state=AnimationState.SHOOT  # Transition to shoot after charge
+        )
+        
+        # Load shoot animation (1 frame, releasing arrow)
+        def on_shoot_complete():
+            """Called when shoot animation finishes"""
             self.attacking = False
         
         self.anim_manager.load_animation(
-            AnimationState.ATTACK,
+            AnimationState.SHOOT,
             [
-                "assets/enemy/Archer-enemy/attk-archer-monster/attk-1.png",
-                "assets/enemy/Archer-enemy/attk-archer-monster/attk-2.png",
-                "assets/enemy/Archer-enemy/attk-archer-monster/attk-3.png",
-                "assets/enemy/Archer-enemy/attk-archer-monster/attk-4.png",
-                "assets/enemy/Archer-enemy/attk-archer-monster/attk-5.png",
-                "assets/enemy/Archer-enemy/attk-archer-monster/attk-6.png",
-                "assets/enemy/Archer-enemy/attk-archer-monster/attk-7.png"
+                "assets/enemy/Archer-enemy/attk-archer-monster/attack/attk-7.png"
             ],
             sprite_size=sprite_size,
-            frame_duration=4,
+            frame_duration=10,  # Hold shoot frame briefly
             loop=False,
             priority=10,
             next_state=AnimationState.IDLE,
-            on_complete_callback=on_attack_complete
+            on_complete_callback=on_shoot_complete
         )
         
         # Load projectile sprite (arrow) - increased from 16×16 to 24×24
@@ -1433,58 +1551,56 @@ class Archer(Enemy):
         self.combat.update()
         self.handle_status_effects()
         
-        if self.cool > 0:
-            self.cool -= 1
-        
         # Get player position and vision info
         ppos = (player.rect.centerx, player.rect.centery)
         epos = (self.rect.centerx, self.rect.centery)
         has_los, in_cone = self.check_vision_cone(level, ppos)
         dist_to_player = self.update_vision_cone_and_memory(ppos, has_los)
         
-        # Attack state machine
+        # Attack state machine using charge system
         from src.entities.animation_system import AnimationState
         
-        if self.tele_t > 0:
-            # Telegraphing attack
-            self.tele_t -= 1
-            
-            # Start attack animation at beginning of telegraph
-            if self.tele_t == 17 and not self.attacking:
-                self.attacking = True
-                self.arrow_spawned = False
-                self.anim_manager.play(AnimationState.ATTACK, force=True)
-            
-            # Spawn arrow at end of telegraph (frame 5 of attack animation)
-            if self.tele_t == 0 and not self.arrow_spawned:
-                self.arrow_spawned = True
-                if has_los and dist_to_player < self.vision_range:
-                    # Calculate arrow direction
-                    dx = ppos[0] - epos[0]
-                    dy = ppos[1] - epos[1]
-                    dist = max(1.0, (dx*dx + dy*dy) ** 0.5)
-                    nx, ny = dx/dist, dy/dist
-                    
-                    # Create arrow hitbox (increased from 10×6 to 16×10)
-                    hb = pygame.Rect(0, 0, 16, 10)
-                    hb.center = self.rect.center
-                    arrow = Hitbox(
-                        hb, 120, 1, self,
-                        dir_vec=(nx, ny),
-                        vx=nx*10.0,
-                        vy=ny*10.0,
-                        has_sprite=True
-                    )
-                    hitboxes.append(arrow)
-                    self.projectile_hitboxes.append(arrow)
-                
-                self.cool = 60
-        elif has_los and self.cool == 0 and dist_to_player < self.vision_range:
-            # Start new attack
-            self.tele_t = 18
-            self.tele_text = '!!'
-            self.attacking = False
+        # Update charge system
+        spawn_arrow = self.charge_system.update()
+        
+        # Start charge animation when charge begins
+        if self.charge_system.is_charging() and not self.attacking:
+            self.attacking = True
             self.arrow_spawned = False
+            self.anim_manager.play(AnimationState.CHARGE, force=True)
+        
+        # Spawn arrow when charge completes
+        if spawn_arrow and not self.arrow_spawned:
+            self.arrow_spawned = True
+            # Play shoot animation (will finish naturally and return to IDLE via callback)
+            self.anim_manager.play(AnimationState.SHOOT, force=True)
+            
+            if has_los and dist_to_player < self.vision_range:
+                # Calculate arrow direction
+                dx = ppos[0] - epos[0]
+                dy = ppos[1] - epos[1]
+                dist = max(1.0, (dx*dx + dy*dy) ** 0.5)
+                nx, ny = dx/dist, dy/dist
+                
+                # Create arrow hitbox (increased from 10×6 to 16×10)
+                hb = pygame.Rect(0, 0, 16, 10)
+                hb.center = self.rect.center
+                arrow = Hitbox(
+                    hb, 120, 1, self,
+                    dir_vec=(nx, ny),
+                    vx=nx*10.0,
+                    vy=ny*10.0,
+                    has_sprite=True
+                )
+                hitboxes.append(arrow)
+                self.projectile_hitboxes.append(arrow)
+        
+        # Start new charge if ready and has LOS
+        if self.charge_system.is_ready() and has_los and dist_to_player < self.vision_range:
+            if self.charge_system.start_charge():
+                self.tele_text = '!!'
+                self.attacking = False
+                self.arrow_spawned = False
         
         # Movement logic
         self.vx = 0
@@ -1554,10 +1670,56 @@ class Archer(Enemy):
         # Draw status effects
         self.draw_status_effects(surf, camera)
         
-        # Draw telegraph
-        if self.tele_t > 0 and self.tele_text:
+        # Draw telegraph during charge phase
+        if self.charge_system.is_charging() and self.tele_text:
             from src.core.utils import draw_text
             draw_text(surf, self.tele_text, camera.to_screen((self.rect.centerx-4, self.rect.top-10)), (255,200,80), size=18, bold=True)
+        
+        # Draw charge/cooldown debug info (F3)
+        if debug_hitboxes and (self.charge_system.is_charging() or self.charge_system.is_cooldown()):
+            from src.core.utils import draw_text
+            
+            # Position for debug info (above the archer)
+            debug_y_offset = -35
+            center_screen = camera.to_screen((self.rect.centerx, self.rect.top + debug_y_offset))
+            
+            # Phase indicator with color coding
+            if self.charge_system.is_charging():
+                phase_text = "CHARGE"
+                phase_color = (255, 100, 100)  # Red for charging
+                bar_color = (255, 120, 120)
+                max_time = self.charge_system.charge_duration
+                current_time = self.charge_system.timer
+            else:  # cooldown
+                phase_text = "COOLDOWN"
+                phase_color = (100, 150, 255)  # Blue for cooldown
+                bar_color = (120, 170, 255)
+                max_time = self.charge_system.cooldown_duration
+                current_time = self.charge_system.timer
+            
+            # Draw phase text
+            draw_text(surf, phase_text, (center_screen[0] - 20, center_screen[1]), phase_color, size=12, bold=True)
+            
+            # Draw timer bar (40px wide, 6px tall)
+            bar_width = 40
+            bar_height = 6
+            bar_x = center_screen[0] - bar_width // 2
+            bar_y = center_screen[1] + 14
+            
+            # Background (dark gray)
+            pygame.draw.rect(surf, (40, 40, 40), (bar_x, bar_y, bar_width, bar_height))
+            
+            # Fill based on timer progress
+            progress = min(1.0, current_time / max_time)
+            fill_width = int(bar_width * progress)
+            pygame.draw.rect(surf, bar_color, (bar_x, bar_y, fill_width, bar_height))
+            
+            # Border
+            pygame.draw.rect(surf, (200, 200, 200), (bar_x, bar_y, bar_width, bar_height), 1)
+            
+            # Draw frame count / max frames
+            timer_text = f"{current_time}/{max_time}"
+            draw_text(surf, timer_text, (center_screen[0] - 12, center_screen[1] + 22), (200, 200, 200), size=10)
         
         # Draw nametag
         self.draw_nametag(surf, camera, show_nametags)
@@ -1583,6 +1745,21 @@ class WizardCaster(Enemy):
         self.can_jump = False
         self.gravity_affected = False  # Wizards float
         self.attacking = False
+        
+        # Charge attack systems for each spell type (60 FPS = 1 second)
+        self.bolt_charge = ChargeAttackSystem(
+            charge_duration=30,  # 0.5 seconds charge
+            cooldown_duration=60  # 1 second cooldown
+        )
+        self.missile_charge = ChargeAttackSystem(
+            charge_duration=60,  # 1 second charge
+            cooldown_duration=180  # 3 seconds cooldown
+        )
+        self.fireball_charge = ChargeAttackSystem(
+            charge_duration=180,  # 3 seconds charge
+            cooldown_duration=450  # 7.5 seconds cooldown
+        )
+        self.current_charge_system = None  # Track which system is active
         
         # Initialize animation system for Evil Wizard
         from src.entities.animation_system import AnimationManager, AnimationState
@@ -1634,33 +1811,46 @@ class WizardCaster(Enemy):
             priority=5
         )
         
-        # Load attack animation (13 frames, spell casting)
-        def on_attack_complete():
-            """Called when attack animation finishes"""
+        # Load charge animation (9 frames, spell casting)
+        self.anim_manager.load_animation(
+            AnimationState.CHARGE,
+            [
+                "assets/enemy/ener_wizard/attk-evil-w/charge/attk1.png",
+                "assets/enemy/ener_wizard/attk-evil-w/charge/attk2.png",
+                "assets/enemy/ener_wizard/attk-evil-w/charge/attk3.png",
+                "assets/enemy/ener_wizard/attk-evil-w/charge/attk4.png",
+                "assets/enemy/ener_wizard/attk-evil-w/charge/attk5.png",
+                "assets/enemy/ener_wizard/attk-evil-w/charge/attk6.png",
+                "assets/enemy/ener_wizard/attk-evil-w/charge/attk7.png",
+                "assets/enemy/ener_wizard/attk-evil-w/charge/attk8.png",
+                "assets/enemy/ener_wizard/attk-evil-w/charge/attk9.png"
+            ],
+            sprite_size=sprite_size,
+            frame_duration=20,  # Looping during charge (9 frames × 20 = 180 frames = 3 seconds for full loop)
+            loop=True,  # Loop charge animation during long charges (fireball)
+            priority=10,
+            next_state=AnimationState.SHOOT
+        )
+        
+        # Load shoot animation (4 frames, releasing spell)
+        def on_shoot_complete():
+            """Called when shoot animation finishes"""
             self.attacking = False
         
         self.anim_manager.load_animation(
-            AnimationState.ATTACK,
+            AnimationState.SHOOT,
             [
-                "assets/enemy/ener_wizard/attk-evil-w/attk1.png",
-                "assets/enemy/ener_wizard/attk-evil-w/attk2.png",
-                "assets/enemy/ener_wizard/attk-evil-w/attk3.png",
-                "assets/enemy/ener_wizard/attk-evil-w/attk4.png",
-                "assets/enemy/ener_wizard/attk-evil-w/attk5.png",
-                "assets/enemy/ener_wizard/attk-evil-w/attk6.png",
-                "assets/enemy/ener_wizard/attk-evil-w/attk7.png",
-                "assets/enemy/ener_wizard/attk-evil-w/attk8.png",
-                "assets/enemy/ener_wizard/attk-evil-w/attk10.png",
-                "assets/enemy/ener_wizard/attk-evil-w/attk11.png",
-                "assets/enemy/ener_wizard/attk-evil-w/attk12.png",
-                "assets/enemy/ener_wizard/attk-evil-w/attk13.png"
+                "assets/enemy/ener_wizard/attk-evil-w/attack/attk10.png",
+                "assets/enemy/ener_wizard/attk-evil-w/attack/attk11.png",
+                "assets/enemy/ener_wizard/attk-evil-w/attack/attk12.png",
+                "assets/enemy/ener_wizard/attk-evil-w/attack/attk13.png"
             ],
             sprite_size=sprite_size,
-            frame_duration=3,
+            frame_duration=5,  # 4 frames × 5 = 20 frames
             loop=False,
             priority=10,
             next_state=AnimationState.IDLE,
-            on_complete_callback=on_attack_complete
+            on_complete_callback=on_shoot_complete
         )
         
         # Load animated projectile sprites for each spell type using animation system helper
@@ -1717,9 +1907,6 @@ class WizardCaster(Enemy):
         self.combat.update()
         self.handle_status_effects()
         
-        if self.cool > 0:
-            self.cool -= 1
-        
         ppos = (player.rect.centerx, player.rect.centery)
         # Check vision first
         has_los, in_cone = self.check_vision_cone(level, ppos)
@@ -1730,84 +1917,110 @@ class WizardCaster(Enemy):
         # Animation state machine
         from src.entities.animation_system import AnimationState
         
-        if self.tele_t > 0:
-            self.tele_t -= 1
+        # Update current charge system if active
+        spawn_projectile = False
+        if self.current_charge_system:
+            spawn_projectile = self.current_charge_system.update()
             
-            # Start attack animation at beginning of telegraph
-            if self.tele_t == 15 and not self.attacking:
+            # Start charge animation when charge begins
+            if self.current_charge_system.is_charging() and not self.attacking:
                 self.attacking = True
-                self.anim_manager.play(AnimationState.ATTACK, force=True)
+                self.anim_manager.play(AnimationState.CHARGE, force=True)
             
-            # Spawn projectile at end of telegraph
-            if self.tele_t == 0 and has_los and dist_to_player < self.vision_range:
-                dx = ppos[0] - epos[0]
-                dy = ppos[1] - epos[1]
-                dist = max(1.0, (dx*dx+dy*dy)**0.5)
-                nx, ny = dx/dist, dy/dist
+            # Spawn projectile at end of charge phase AND trigger shoot animation
+            if spawn_projectile:
+                # Play shoot animation (will finish naturally while cooldown runs)
+                self.anim_manager.play(AnimationState.SHOOT, force=True)
                 
-                # Spawn points vary by attack type
-                spawn_x = self.rect.centerx
-                
-                if self.action == 'missile':
-                    # Missile: higher spawn point (20% from top - upper chest/shoulder level)
-                    spawn_y = self.rect.top + int(self.rect.height * 0.2)
-                    # Increased missile hitbox from 18×6 to 32×12 for better visibility
-                    hb = pygame.Rect(0,0,32,12)
-                    hb.center = (spawn_x, spawn_y)
-                    proj = Hitbox(hb, 36, 4, self, dir_vec=(nx,ny), vx=nx*14.0, vy=ny*14.0, has_sprite=True, tag='missile')
-                    # Attach animation data
-                    proj.anim_frames = self.projectile_animations.get('missile', [])
-                    proj.anim_index = 0
-                    proj.anim_timer = 0
-                    proj.anim_speed = 3  # Change frame every 3 ticks
-                    hitboxes.append(proj)
-                    self.projectile_hitboxes.append(proj)
-                    self.cool = 70
-                elif self.action == 'fireball':
-                    # Fireball: mid-level spawn (30% from top - chest/hand level)
-                    spawn_y = self.rect.top + int(self.rect.height * 0.3)
-                    # Smaller hitbox for collision (so it doesn't hit walls), but we'll override sprite size for visibility
-                    hb = pygame.Rect(0,0,24,24)
-                    hb.center = (spawn_x, spawn_y)
-                    proj = Hitbox(hb, 180, 3, self, dir_vec=(nx,ny), vx=nx*6.0, vy=ny*6.0, aoe_radius=48, has_sprite=True, tag='fireball')
-                    # Attach animation data
-                    proj.anim_frames = self.projectile_animations.get('fireball', [])
-                    proj.anim_index = 0
-                    proj.anim_timer = 0
-                    proj.anim_speed = 4  # Change frame every 4 ticks
-                    # Override sprite display size (larger than hitbox for visibility despite transparency)
-                    proj.sprite_display_size = (80, 80)  # Large display size to show fireball through transparency
-                    hitboxes.append(proj)
-                    self.projectile_hitboxes.append(proj)
-                    self.cool = 80
-                else:
-                    # Bolt: higher spawn point (20% from top - upper chest/shoulder level)
-                    spawn_y = self.rect.top + int(self.rect.height * 0.2)
-                    # Increased bolt hitbox from 8×8 to 16×16 for better visibility
-                    hb = pygame.Rect(0,0,16,16)
-                    hb.center = (spawn_x, spawn_y)
-                    proj = Hitbox(hb, 90, 1, self, dir_vec=(nx,ny), vx=nx*9.0, vy=ny*9.0, has_sprite=True, tag='bolt')
-                    # Attach animation data
-                    proj.anim_frames = self.projectile_animations.get('bolt', [])
-                    proj.anim_index = 0
-                    proj.anim_timer = 0
-                    proj.anim_speed = 5  # Change frame every 5 ticks
-                    hitboxes.append(proj)
-                    self.projectile_hitboxes.append(proj)
-                    self.cool = 50
+                # Calculate direction to player
+                if has_los and dist_to_player < self.vision_range:
+                    dx = ppos[0] - epos[0]
+                    dy = ppos[1] - epos[1]
+                    dist = max(1.0, (dx*dx+dy*dy)**0.5)
+                    nx, ny = dx/dist, dy/dist
+                    
+                    # Spawn points vary by attack type
+                    spawn_x = self.rect.centerx
+                    
+                    if self.action == 'missile':
+                        # Missile: higher spawn point (20% from top - upper chest/shoulder level)
+                        spawn_y = self.rect.top + int(self.rect.height * 0.2)
+                        # Increased missile hitbox from 18×6 to 32×12 for better visibility
+                        hb = pygame.Rect(0,0,32,12)
+                        hb.center = (spawn_x, spawn_y)
+                        proj = Hitbox(hb, 36, 4, self, dir_vec=(nx,ny), vx=nx*14.0, vy=ny*14.0, has_sprite=True, tag='missile')
+                        # Attach animation data
+                        proj.anim_frames = self.projectile_animations.get('missile', [])
+                        proj.anim_index = 0
+                        proj.anim_timer = 0
+                        proj.anim_speed = 3  # Change frame every 3 ticks
+                        hitboxes.append(proj)
+                        self.projectile_hitboxes.append(proj)
+                    elif self.action == 'fireball':
+                        # Fireball: mid-level spawn (30% from top - chest/hand level)
+                        spawn_y = self.rect.top + int(self.rect.height * 0.3)
+                        # Smaller hitbox for collision (so it doesn't hit walls), but we'll override sprite size for visibility
+                        hb = pygame.Rect(0,0,24,24)
+                        hb.center = (spawn_x, spawn_y)
+                        proj = Hitbox(hb, 180, 3, self, dir_vec=(nx,ny), vx=nx*6.0, vy=ny*6.0, aoe_radius=48, has_sprite=True, tag='fireball')
+                        # Attach animation data
+                        proj.anim_frames = self.projectile_animations.get('fireball', [])
+                        proj.anim_index = 0
+                        proj.anim_timer = 0
+                        proj.anim_speed = 4  # Change frame every 4 ticks
+                        # Override sprite display size (larger than hitbox for visibility despite transparency)
+                        proj.sprite_display_size = (80, 80)  # Large display size to show fireball through transparency
+                        hitboxes.append(proj)
+                        self.projectile_hitboxes.append(proj)
+                    else:
+                        # Bolt: higher spawn point (20% from top - upper chest/shoulder level)
+                        spawn_y = self.rect.top + int(self.rect.height * 0.2)
+                        # Increased bolt hitbox from 8×8 to 16×16 for better visibility
+                        hb = pygame.Rect(0,0,16,16)
+                        hb.center = (spawn_x, spawn_y)
+                        proj = Hitbox(hb, 90, 1, self, dir_vec=(nx,ny), vx=nx*9.0, vy=ny*9.0, has_sprite=True, tag='bolt')
+                        # Attach animation data
+                        proj.anim_frames = self.projectile_animations.get('bolt', [])
+                        proj.anim_index = 0
+                        proj.anim_timer = 0
+                        proj.anim_speed = 5  # Change frame every 5 ticks
+                        hitboxes.append(proj)
+                        self.projectile_hitboxes.append(proj)
+            
+            # Check if charge system is complete (exited cooldown)
+            if self.current_charge_system.is_ready():
+                self.current_charge_system = None
                 self.action = None
-        elif has_los and self.cool == 0 and dist_to_player < self.vision_range:
+        
+        # Start new attack if no charge system is active
+        if not self.current_charge_system and has_los and dist_to_player < self.vision_range:
             import random
-            self.action = random.choices(['bolt','missile','fireball'], weights=[0.5,0.3,0.2])[0]
-            if self.action == 'missile':
-                self.tele_t = 24
-                self.tele_text = '!!!'
-            elif self.action == 'fireball':
-                self.tele_t = 18
-                self.tele_text = '!!'
-            else:
-                self.tele_t = 16
-                self.tele_text = '!!'
+            
+            # Check which attacks are ready (not on cooldown)
+            available_attacks = []
+            if self.bolt_charge.is_ready():
+                available_attacks.append(('bolt', 0.5, self.bolt_charge))
+            if self.missile_charge.is_ready():
+                available_attacks.append(('missile', 0.3, self.missile_charge))
+            if self.fireball_charge.is_ready():
+                available_attacks.append(('fireball', 0.2, self.fireball_charge))
+            
+            # Pick a random attack from available ones
+            if available_attacks:
+                weights = [weight for _, weight, _ in available_attacks]
+                chosen = random.choices(available_attacks, weights=weights)[0]
+                self.action, _, charge_system = chosen
+                
+                # Start the charge system
+                if charge_system.start_charge():
+                    self.current_charge_system = charge_system
+                    # Set telegraph text
+                    if self.action == 'missile':
+                        self.tele_text = '!!!'
+                    elif self.action == 'fireball':
+                        self.tele_text = '!!'
+                    else:
+                        self.tele_text = '!!'
         
         from ..ai.enemy_movement import clamp_enemy_to_level
         self.handle_movement(level, player)
@@ -1817,6 +2030,11 @@ class WizardCaster(Enemy):
         if has_los and dist_to_player < self.vision_range:
             self.facing = 1 if ppos[0] > epos[0] else -1
             self.facing_angle = 0 if self.facing > 0 else math.pi
+        
+        # Reset attacking flag when entering cooldown phase
+        if self.attacking and self.current_charge_system:
+            if self.current_charge_system.is_cooldown():
+                self.attacking = False
         
         # Animation state logic
         if not self.attacking:
@@ -1867,10 +2085,59 @@ class WizardCaster(Enemy):
         # Draw status effects
         self.draw_status_effects(surf, camera)
         
-        # Draw telegraph
-        if self.tele_t > 0 and self.tele_text:
+        # Draw telegraph during charge phase
+        if self.current_charge_system and self.current_charge_system.is_charging() and self.tele_text:
             from src.core.utils import draw_text
             draw_text(surf, self.tele_text, camera.to_screen((self.rect.centerx-4, self.rect.top-10)), (255,200,80), size=18, bold=True)
+        
+        # Draw charge/cooldown debug info (F3)
+        if debug_hitboxes and self.current_charge_system and (self.current_charge_system.is_charging() or self.current_charge_system.is_cooldown()):
+            from src.core.utils import draw_text
+            
+            # Position for debug info (above the wizard)
+            debug_y_offset = -45
+            center_screen = camera.to_screen((self.rect.centerx, self.rect.top + debug_y_offset))
+            
+            # Phase indicator with color coding
+            if self.current_charge_system.is_charging():
+                phase_text = "CHARGE"
+                phase_color = (255, 100, 100)  # Red for charging
+                bar_color = (255, 120, 120)
+                max_time = self.current_charge_system.charge_duration
+                current_time = self.current_charge_system.timer
+                # Add spell type indicator
+                spell_text = f"({self.action.upper() if self.action else 'NONE'})"
+            else:  # cooldown
+                phase_text = "COOLDOWN"
+                phase_color = (100, 150, 255)  # Blue for cooldown
+                bar_color = (120, 170, 255)
+                max_time = self.current_charge_system.cooldown_duration
+                current_time = self.current_charge_system.timer
+                spell_text = f"({self.action.upper() if self.action else 'NONE'})"
+            
+            # Draw phase text with spell type
+            draw_text(surf, f"{phase_text} {spell_text}", (center_screen[0] - 35, center_screen[1]), phase_color, size=11, bold=True)
+            
+            # Draw timer bar (50px wide for more visibility, 6px tall)
+            bar_width = 50
+            bar_height = 6
+            bar_x = center_screen[0] - bar_width // 2
+            bar_y = center_screen[1] + 14
+            
+            # Background (dark gray)
+            pygame.draw.rect(surf, (40, 40, 40), (bar_x, bar_y, bar_width, bar_height))
+            
+            # Fill based on timer progress
+            progress = min(1.0, current_time / max_time)
+            fill_width = int(bar_width * progress)
+            pygame.draw.rect(surf, bar_color, (bar_x, bar_y, fill_width, bar_height))
+            
+            # Border
+            pygame.draw.rect(surf, (200, 200, 200), (bar_x, bar_y, bar_width, bar_height), 1)
+            
+            # Draw frame count / max frames
+            timer_text = f"{current_time}/{max_time}"
+            draw_text(surf, timer_text, (center_screen[0] - 15, center_screen[1] + 22), (200, 200, 200), size=10)
         
         # Draw nametag
         self.draw_nametag(surf, camera, show_nametags)

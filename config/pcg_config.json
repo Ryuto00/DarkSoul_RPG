@@ -3,7 +3,7 @@
     "use_pcg": false,
     "seed_mode": "random",
     "seed": 1784473909,
-    "selected_class": "Ranger",
+    "selected_class": "Knight",
     "num_levels": 3,
     "rooms_per_level": 6,
     "room_width": 50,
